@@ -1,0 +1,23 @@
+{
+  "app_title": "لاكي فيست",
+  "tagline": "ادمج الهدايا، ارتقِ بمستواك، واربح الجوائز!",
+  "tab_merge": "دمج",
+  "tab_tasks": "المهام",
+  "tab_raffles": "السحوبات",
+  "tab_wallet": "المحفظة",
+  "level": "المستوى",
+  "xp": "نقاط الخبرة",
+  "connect_wallet": "ربط المحفظة",
+  "wallet_connected": "تم ربط المحفظة",
+  "disconnect": "قطع الاتصال",
+  "claim": "استلام",
+  "claimed": "تم الاستلام",
+  "enter_raffle": "المشاركة في السحب",
+  "entered": "تمت المشاركة",
+  "level_required": "يتطلب المستوى {level}",
+  "wallet_required_notice": "قم بربط محفظتك للمشاركة في السحوبات",
+  "ends_in": "ينتهي خلال",
+  "loading": "جارٍ التحميل...",
+  "error_generic": "حدث خطأ ما. حاول مرة أخرى.",
+  "banned_notice": "تم تقييد حسابك."
+}

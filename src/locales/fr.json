@@ -1,0 +1,23 @@
+{
+  "app_title": "Lucky Fest",
+  "tagline": "Fusionnez des cadeaux, montez de niveau et gagnez des prix !",
+  "tab_merge": "Fusion",
+  "tab_tasks": "Tâches",
+  "tab_raffles": "Tirages",
+  "tab_wallet": "Portefeuille",
+  "level": "Niveau",
+  "xp": "XP",
+  "connect_wallet": "Connecter le portefeuille",
+  "wallet_connected": "Portefeuille connecté",
+  "disconnect": "Déconnecter",
+  "claim": "Réclamer",
+  "claimed": "Réclamé",
+  "enter_raffle": "Participer",
+  "entered": "Participation enregistrée",
+  "level_required": "Niveau {level} requis",
+  "wallet_required_notice": "Connectez votre portefeuille pour participer aux tirages",
+  "ends_in": "Se termine dans",
+  "loading": "Chargement...",
+  "error_generic": "Une erreur est survenue. Veuillez réessayer.",
+  "banned_notice": "Votre compte a été restreint."
+}

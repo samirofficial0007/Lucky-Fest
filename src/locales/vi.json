@@ -1,0 +1,23 @@
+{
+  "app_title": "Lucky Fest",
+  "tagline": "Ghép quà, lên cấp và giành giải thưởng!",
+  "tab_merge": "Ghép",
+  "tab_tasks": "Nhiệm vụ",
+  "tab_raffles": "Quay số",
+  "tab_wallet": "Ví",
+  "level": "Cấp độ",
+  "xp": "XP",
+  "connect_wallet": "Kết nối ví",
+  "wallet_connected": "Đã kết nối ví",
+  "disconnect": "Ngắt kết nối",
+  "claim": "Nhận thưởng",
+  "claimed": "Đã nhận",
+  "enter_raffle": "Tham gia",
+  "entered": "Đã tham gia",
+  "level_required": "Yêu cầu cấp độ {level}",
+  "wallet_required_notice": "Kết nối ví để tham gia quay số",
+  "ends_in": "Kết thúc sau",
+  "loading": "Đang tải...",
+  "error_generic": "Đã xảy ra lỗi. Vui lòng thử lại.",
+  "banned_notice": "Tài khoản của bạn đã bị hạn chế."
+}
