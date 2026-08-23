@@ -52,7 +52,26 @@ async function getOrCreateUser(tg) {
 }
 
 function serializeUser(u) {
-  return { telegramId:u.telegramId, username:u.username||"", name:[u.firstName,u.lastName].filter(Boolean).join(" ")||"User", photoUrl:u.photoUrl||"/assets/assistant-logo.jpg", level:u.level||1, coins:Number(u.coins.toFixed(4)), usdt:Number(u.usdt.toFixed(8)), totalBalance:Number((u.coins+u.usdt).toFixed(8)), referralIncome:Number((u.referralIncome||0).toFixed(8)), referralCoins:Number((u.referralCoins||0).toFixed(4)), withdrawnUsdt:Number((u.withdrawnUsdt||0).toFixed(8)), incomeHour:0.0005, incomeDay:0.01, incomeMonth:0.34, referralCount:u.referralCount, gifts:u.gifts, language:u.language||"English", theme:u.theme||"dark" };
+  return {
+    telegramId: u.telegramId,
+    username: u.username || "",
+    name: [u.firstName, u.lastName].filter(Boolean).join(" ") || "User",
+    photoUrl: u.photoUrl || "/assets/assistant-logo.jpg",
+    level: u.level || 1,
+    coins: Number(u.coins.toFixed(4)),
+    usdt: Number(u.usdt.toFixed(8)),
+    totalBalance: Number((u.coins + u.usdt).toFixed(8)),
+    referralIncome: Number((u.referralIncome || 0).toFixed(8)),
+    referralCoins: Number((u.referralCoins || 0).toFixed(4)),
+    withdrawnUsdt: Number((u.withdrawnUsdt || 0).toFixed(8)),
+    incomeHour: 0.0005,
+    incomeDay: 0.01,
+    incomeMonth: 0.34,
+    referralCount: u.referralCount,
+    gifts: u.gifts,
+    language: u.language || "English",
+    theme: u.theme || "dark"
+  };
 }
 
 app.get("/health", (_req, res) => res.json({ ok: true, service: "novum-ai-agent" }));
@@ -85,23 +104,43 @@ app.get("/api/referrals", auth, async (req, res) => {
   });
 });
 
-app.post("/api/presence",auth,async(req,res)=>{
-  await Presence.findOneAndUpdate({telegramId:String(req.tgUser.id)},{telegramId:String(req.tgUser.id),lastSeenAt:new Date()},{upsert:true});
-  const online=await Presence.countDocuments({lastSeenAt:{$gte:new Date(Date.now()-45000)}});
-  res.json({online});
+app.post("/api/presence", auth, async (req, res) => {
+  await Presence.findOneAndUpdate(
+    { telegramId: String(req.tgUser.id) },
+    { telegramId: String(req.tgUser.id), lastSeenAt: new Date() },
+    { upsert: true }
+  );
+  const online = await Presence.countDocuments({
+    lastSeenAt: { $gte: new Date(Date.now() - 45000) }
+  });
+  res.json({ online });
 });
-app.get("/api/account",auth,async(req,res)=>{
-  const user=await getOrCreateUser(req.tgUser); let invitedBy=null;
-  if(user.referrerTelegramId){const r=await User.findOne({telegramId:user.referrerTelegramId});if(r)invitedBy={name:[r.firstName,r.lastName].filter(Boolean).join(" ")||"User",username:r.username||""};}
-  const operations=await Transaction.find({telegramId:user.telegramId}).sort({createdAt:-1}).limit(100);
-  res.json({user:serializeUser(user),invitedBy,operations});
+
+app.get("/api/account", auth, async (req, res) => {
+  const user = await getOrCreateUser(req.tgUser);
+  let invitedBy = null;
+  if (user.referrerTelegramId) {
+    const r = await User.findOne({ telegramId: user.referrerTelegramId });
+    if (r) invitedBy = {
+      name: [r.firstName, r.lastName].filter(Boolean).join(" ") || "User",
+      username: r.username || ""
+    };
+  }
+  const operations = await Transaction.find({ telegramId: user.telegramId })
+    .sort({ createdAt: -1 })
+    .limit(100);
+  res.json({ user: serializeUser(user), invitedBy, operations });
 });
-app.get("/api/faq",auth,async(req,res)=>res.json(await FAQ.find({active:true}).sort({order:1}).limit(18)));
+
+app.get("/api/faq", auth, async (req, res) =>
+  res.json(await FAQ.find({ active: true }).sort({ order: 1 }).limit(18))
+);
 
 app.get("/api/transactions", auth, async (req, res) => {
   const user = await getOrCreateUser(req.tgUser);
   const tx = await Transaction.find({ telegramId: user.telegramId })
-    .sort({ createdAt: -1 }).limit(50);
+    .sort({ createdAt: -1 })
+    .limit(50);
   res.json(tx);
 });
 
@@ -150,7 +189,9 @@ app.post("/api/topup", auth, async (req, res) => {
         process.env.ADMIN_CHAT_ID,
         `💵 Top-up request\nUser: ${user.telegramId}\nAmount: ${amount} USDT`
       );
-    } catch (e) { console.error("Admin notification failed", e.message); }
+    } catch (e) {
+      console.error("Admin notification failed", e.message);
+    }
   }
 
   res.json({
@@ -193,7 +234,9 @@ app.post("/api/withdraw", auth, async (req, res) => {
         process.env.ADMIN_CHAT_ID,
         `💸 Withdrawal request\nUser: ${user.telegramId}\nAmount: ${amount} USDT\nWallet: ${wallet}`
       );
-    } catch (e) { console.error("Admin notification failed", e.message); }
+    } catch (e) {
+      console.error("Admin notification failed", e.message);
+    }
   }
 
   res.json({ ok: true, user: serializeUser(user) });
@@ -220,7 +263,8 @@ app.post("/api/subscribe", auth, async (req, res) => {
   res.json({ ok: true, user: serializeUser(user) });
 });
 
-app.get("*", (_req, res) => {
+// ✅ Fixed for Express 5 / path-to-regexp
+app.get("/*splat", (_req, res) => {
   res.sendFile(path.join(process.cwd(), "public", "index.html"));
 });
 
