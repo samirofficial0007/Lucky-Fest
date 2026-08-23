@@ -263,15 +263,26 @@ app.post("/api/subscribe", auth, async (req, res) => {
   res.json({ ok: true, user: serializeUser(user) });
 });
 
-// ✅ Fixed for Express 5 / path-to-regexp
+// Fixed for Express 5 / path-to-regexp
 app.get("/*splat", (_req, res) => {
   res.sendFile(path.join(process.cwd(), "public", "index.html"));
 });
 
 async function main() {
   await connectDB();
-  global.botInstance = await startBot();
-  app.listen(PORT, () => console.log(`Web app running on port ${PORT}`));
+
+  // আগে ওয়েব সার্ভার চালু করো (পোর্ট ওপেন হবে)
+  app.listen(PORT, () => {
+    console.log(`Web app running on port ${PORT}`);
+  });
+
+  // তারপর বট চালু করো
+  try {
+    global.botInstance = await startBot();
+    console.log("Telegram bot started successfully");
+  } catch (err) {
+    console.error("Bot failed to start:", err.message);
+  }
 }
 
 main().catch(err => {
