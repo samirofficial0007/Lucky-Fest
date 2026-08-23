@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: novum-ai-agent
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    autoDeploy: true
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: WEB_APP_URL
+        sync: false
+      - key: MONGODB_URI
+        sync: false
+      - key: BOT_USERNAME
+        sync: false
+      - key: BOT_NAME
+        value: NOVUM.AI Agent
+      - key: ADMIN_CHAT_ID
+        sync: false
+      - key: CHANNEL_USERNAME
+        sync: false
+      - key: CHANNEL_URL
+        sync: false
+      - key: MIN_WITHDRAW_USDT
+        value: "1"
