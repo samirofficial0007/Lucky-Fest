@@ -18,14 +18,29 @@ const { startBot } = require("./bot");
 const app = express();
 
 /* =========================================================
-   BASIC CONFIG
+   BASIC APP CONFIG
 ========================================================= */
+
+app.use(helmet({ contentSecurityPolicy: false }));
+
+app.use(express.json({
+  limit: "1mb"
+}));
+
+app.use(express.urlencoded({
+  extended: false
+}));
 
 const PORT = process.env.PORT || 3000;
 
-const CHANNEL_USERNAME = (
-  process.env.CHANNEL_USERNAME || "Lucky_Fest_Official"
-).replace(/^@/, "");
+
+/* =========================================================
+   PROJECT CONFIG
+========================================================= */
+
+const CHANNEL_USERNAME =
+  (process.env.CHANNEL_USERNAME || "Lucky_Fest_Official")
+    .replace(/^@/, "");
 
 const CHANNEL_URL =
   process.env.CHANNEL_URL ||
@@ -35,100 +50,222 @@ const TOPUP_WALLET =
   process.env.TOPUP_WALLET ||
   "UQCzzBp_io5zdMiOCMykYY7HzUFkhRqST-xMWvr_DzSScooi";
 
-const MINING_DAILY_RATE = Number(
-  process.env.MINING_DAILY_RATE || 0.027
-);
+const SUPPORT_USERNAME =
+  (process.env.SUPPORT_USERNAME || "assistant_bd")
+    .replace(/^@/, "");
 
-const MINING_MAX_ELAPSED_SECONDS = Number(
-  process.env.MINING_MAX_ELAPSED_SECONDS || 86400 * 365
-);
+const WEB_APP_URL =
+  process.env.WEB_APP_URL || "";
 
 
 /* =========================================================
-   SECURITY / BODY PARSER
+   MINING CONFIG
 ========================================================= */
 
-app.use(
-  helmet({
-    contentSecurityPolicy: false
-  })
-);
+/*
+  NORMAL MINING
+  -------------------------
+  Every registered user receives
+  normal mining even without top-up.
 
-app.use(
-  express.json({
-    limit: "1mb"
-  })
-);
+  Example:
+  0.001 USDT/day
+*/
 
-app.use(
-  express.urlencoded({
-    extended: false
-  })
-);
+const NORMAL_MINING_DAILY_RATE =
+  Number(process.env.NORMAL_MINING_DAILY_RATE || 0.001);
+
+
+/*
+  TOP-UP / BOOST MINING
+  -------------------------
+  If user has confirmed miningPrincipal,
+  this rate is applied to that principal.
+
+  Example:
+  100 USDT × 0.027/day
+  = 2.7 USDT/day
+*/
+
+const MINING_DAILY_RATE =
+  Number(process.env.MINING_DAILY_RATE || 0.027);
+
+
+/*
+  Prevent huge elapsed-time calculations.
+  Default = 365 days.
+*/
+
+const MINING_MAX_ELAPSED_SECONDS =
+  Number(
+    process.env.MINING_MAX_ELAPSED_SECONDS ||
+    (86400 * 365)
+  );
+
+
+/*
+  Minimum withdrawal.
+*/
+
+const MIN_WITHDRAW_USDT =
+  Number(process.env.MIN_WITHDRAW_USDT || 1);
 
 
 /* =========================================================
-   STATIC FILES
-   IMPORTANT:
-   This makes /styles.css, /app.js, /assets/... work.
-========================================================= */
-
-const publicPath = path.join(process.cwd(), "public");
-
-app.use(
-  express.static(publicPath, {
-    extensions: ["html"],
-    index: "index.html"
-  })
-);
-
-
-/* =========================================================
-   TELEGRAM AUTH
+   TELEGRAM AUTH MIDDLEWARE
 ========================================================= */
 
 function auth(req, res, next) {
-  const initData =
-    req.headers["x-telegram-init-data"] ||
-    req.body?.initData ||
-    req.query?.initData;
 
-  const tgUser = verifyTelegramInitData(
-    initData,
-    process.env.BOT_TOKEN
-  );
+  try {
 
-  if (!tgUser) {
+    const initData =
+      req.headers["x-telegram-init-data"] ||
+      req.body?.initData;
+
+    const tgUser =
+      verifyTelegramInitData(
+        initData,
+        process.env.BOT_TOKEN
+      );
+
+    if (!tgUser) {
+
+      return res.status(401).json({
+        error: "Telegram authorization required"
+      });
+
+    }
+
+    req.tgUser = tgUser;
+
+    next();
+
+  } catch (error) {
+
+    console.error("Telegram auth error:", error);
+
     return res.status(401).json({
-      error: "Telegram authorization required"
+      error: "Invalid Telegram authorization"
     });
+
   }
 
-  req.tgUser = tgUser;
-
-  next();
 }
 
 
 /* =========================================================
-   MINING RATE
+   NUMBER HELPERS
+========================================================= */
+
+function safeNumber(value, fallback = 0) {
+
+  const n = Number(value);
+
+  return Number.isFinite(n)
+    ? n
+    : fallback;
+
+}
+
+
+/* =========================================================
+   MINING LEVEL RATE
 ========================================================= */
 
 function miningRateForLevel(level) {
+
+  const base =
+    safeNumber(
+      MINING_DAILY_RATE,
+      0.027
+    );
+
   const rates = {
-    1: MINING_DAILY_RATE,
-    2: MINING_DAILY_RATE * 1.15,
-    3: MINING_DAILY_RATE * 1.30,
-    4: MINING_DAILY_RATE * 1.50,
-    5: MINING_DAILY_RATE * 1.75
+
+    1: base,
+
+    2: base * 1.15,
+
+    3: base * 1.30,
+
+    4: base * 1.50,
+
+    5: base * 1.75
+
   };
 
-  const safeLevel = Math.min(
-    Math.max(Number(level || 1), 1),
-    5
+  const currentLevel =
+    Math.min(
+      Math.max(
+        safeNumber(level, 1),
+        1
+      ),
+      5
+    );
+
+  return (
+    rates[currentLevel] ||
+    base
   );
 
-  return rates[safeLevel] || MINING_DAILY_RATE;
+}
+
+
+/* =========================================================
+   NORMAL MINING
+========================================================= */
+
+function calculateNormalMining(elapsedSeconds) {
+
+  if (
+    elapsedSeconds <= 0 ||
+    NORMAL_MINING_DAILY_RATE <= 0
+  ) {
+
+    return 0;
+
+  }
+
+  return (
+    NORMAL_MINING_DAILY_RATE *
+    (elapsedSeconds / 86400)
+  );
+
+}
+
+
+/* =========================================================
+   BOOST / TOP-UP MINING
+========================================================= */
+
+function calculateBoostMining(
+  principal,
+  level,
+  elapsedSeconds
+) {
+
+  principal =
+    safeNumber(principal);
+
+  if (
+    principal <= 0 ||
+    elapsedSeconds <= 0
+  ) {
+
+    return 0;
+
+  }
+
+  const dailyRate =
+    miningRateForLevel(level);
+
+  return (
+    principal *
+    dailyRate *
+    (elapsedSeconds / 86400)
+  );
+
 }
 
 
@@ -136,83 +273,252 @@ function miningRateForLevel(level) {
    SETTLE MINING
 ========================================================= */
 
+/*
+  IMPORTANT:
+
+  Normal mining:
+      Always active.
+
+  Boost mining:
+      Only active when:
+        miningActive === true
+        AND
+        miningPrincipal > 0
+
+  Both earnings are added to:
+      miningAccrued
+*/
+
 async function settleMining(user) {
-  if (
-    !user.miningActive ||
-    !(user.miningPrincipal > 0)
-  ) {
-    return 0;
+
+  if (!user) {
+    return {
+      normal: 0,
+      boost: 0,
+      total: 0
+    };
   }
 
-  const now = Date.now();
 
-  const last = user.miningLastAt
-    ? user.miningLastAt.getTime()
-    : now;
+  const now =
+    Date.now();
 
-  const elapsed = Math.min(
-    Math.max((now - last) / 1000, 0),
-    MINING_MAX_ELAPSED_SECONDS
-  );
+
+  let last =
+    user.miningLastAt
+      ? user.miningLastAt.getTime()
+      : now;
+
+
+  /*
+    Safety:
+    If old/invalid date exists,
+    start from now.
+  */
+
+  if (
+    !Number.isFinite(last) ||
+    last > now
+  ) {
+
+    last = now;
+
+  }
+
+
+  let elapsed =
+    (now - last) / 1000;
+
+
+  elapsed =
+    Math.min(
+      Math.max(elapsed, 0),
+      MINING_MAX_ELAPSED_SECONDS
+    );
+
 
   if (elapsed <= 0) {
-    return 0;
+
+    return {
+      normal: 0,
+      boost: 0,
+      total: 0
+    };
+
   }
 
-  const dailyRate = miningRateForLevel(
-    user.level
-  );
 
-  const earned =
-    user.miningPrincipal *
-    dailyRate *
-    (elapsed / 86400);
+  /* -----------------------------------------
+     NORMAL MINING
+  ----------------------------------------- */
 
-  if (earned > 0) {
+  const normalEarned =
+    calculateNormalMining(
+      elapsed
+    );
+
+
+  /* -----------------------------------------
+     BOOST MINING
+  ----------------------------------------- */
+
+  let boostEarned = 0;
+
+
+  if (
+    user.miningActive === true &&
+    safeNumber(user.miningPrincipal) > 0
+  ) {
+
+    boostEarned =
+      calculateBoostMining(
+        safeNumber(user.miningPrincipal),
+        safeNumber(user.level, 1),
+        elapsed
+      );
+
+  }
+
+
+  const totalEarned =
+    normalEarned +
+    boostEarned;
+
+
+  /*
+    Save accumulated mining.
+  */
+
+  if (totalEarned > 0) {
+
     user.miningAccrued =
-      Number(user.miningAccrued || 0) + earned;
+      safeNumber(user.miningAccrued) +
+      totalEarned;
 
-    user.miningLastAt = new Date(now);
-
-    await user.save();
   }
 
-  return earned;
+
+  /*
+    VERY IMPORTANT:
+    Move miningLastAt forward even if
+    earning is zero.
+  */
+
+  user.miningLastAt =
+    new Date(now);
+
+
+  await user.save();
+
+
+  return {
+
+    normal: normalEarned,
+
+    boost: boostEarned,
+
+    total: totalEarned
+
+  };
+
 }
 
 
 /* =========================================================
-   GET / CREATE USER
+   CREATE / UPDATE USER
 ========================================================= */
 
 async function getOrCreateUser(tg) {
-  let user = await User.findOne({
-    telegramId: String(tg.id)
-  });
+
+  const telegramId =
+    String(tg.id);
+
+
+  let user =
+    await User.findOne({
+      telegramId
+    });
+
+
+  /* -----------------------------------------
+     NEW USER
+  ----------------------------------------- */
 
   if (!user) {
-    user = await User.create({
-      telegramId: String(tg.id),
-      username: tg.username,
-      firstName: tg.first_name,
-      lastName: tg.last_name,
-      photoUrl: tg.photo_url,
-      miningLastAt: new Date(),
-      lastSeenAt: new Date()
-    });
-  } else {
-    user.username = tg.username;
-    user.firstName = tg.first_name;
-    user.lastName = tg.last_name;
-    user.photoUrl = tg.photo_url;
-    user.lastSeenAt = new Date();
 
-    await settleMining(user);
+    user =
+      await User.create({
 
-    await user.save();
+        telegramId,
+
+        username:
+          tg.username || "",
+
+        firstName:
+          tg.first_name || "",
+
+        lastName:
+          tg.last_name || "",
+
+        photoUrl:
+          tg.photo_url || "",
+
+        miningLastAt:
+          new Date(),
+
+        miningAccrued:
+          0,
+
+        miningPrincipal:
+          0,
+
+        miningActive:
+          false
+
+      });
+
+
+    return user;
+
   }
 
+
+  /* -----------------------------------------
+     EXISTING USER
+  ----------------------------------------- */
+
+  /*
+    First settle old mining.
+    This ensures the user gets earning
+    for time spent away from the app.
+  */
+
+  await settleMining(user);
+
+
+  user.username =
+    tg.username || "";
+
+  user.firstName =
+    tg.first_name || "";
+
+  user.lastName =
+    tg.last_name || "";
+
+  user.photoUrl =
+    tg.photo_url ||
+    user.photoUrl ||
+    "";
+
+  user.lastSeenAt =
+    new Date();
+
+
+  await user.save();
+
+
   return user;
+
 }
 
 
@@ -221,103 +527,236 @@ async function getOrCreateUser(tg) {
 ========================================================= */
 
 function serializeUser(u) {
-  const pendingMining =
-    Number(u.miningAccrued || 0);
+
+  const coins =
+    safeNumber(u.coins);
+
+  const usdt =
+    safeNumber(u.usdt);
+
+  const miningAccrued =
+    safeNumber(u.miningAccrued);
 
   const principal =
-    Number(u.miningPrincipal || 0);
+    safeNumber(u.miningPrincipal);
 
-  const rate =
-    miningRateForLevel(u.level);
+  const level =
+    safeNumber(u.level, 1);
+
+
+  const boostDailyRate =
+    miningRateForLevel(level);
+
+
+  const normalDailyIncome =
+    NORMAL_MINING_DAILY_RATE;
+
+
+  const boostDailyIncome =
+    principal > 0
+      ? principal * boostDailyRate
+      : 0;
+
+
+  const totalDailyIncome =
+    normalDailyIncome +
+    (
+      u.miningActive
+        ? boostDailyIncome
+        : 0
+    );
+
 
   return {
-    telegramId: u.telegramId,
 
-    username: u.username || "",
+    telegramId:
+      u.telegramId,
+
+    username:
+      u.username || "",
 
     name:
-      [u.firstName, u.lastName]
+      [
+        u.firstName,
+        u.lastName
+      ]
         .filter(Boolean)
-        .join(" ") || "User",
+        .join(" ")
+        || "User",
+
 
     photoUrl:
       u.photoUrl ||
       "/assets/assistant-logo.jpg",
 
-    level: u.level || 1,
 
-    coins: Number(
-      Number(u.coins || 0).toFixed(4)
-    ),
+    level,
 
-    usdt: Number(
-      Number(u.usdt || 0).toFixed(8)
-    ),
 
-    totalBalance: Number(
-      (
-        Number(u.coins || 0) +
-        Number(u.usdt || 0) +
-        pendingMining
-      ).toFixed(8)
-    ),
+    coins:
+      Number(
+        coins.toFixed(4)
+      ),
 
-    miningAccrued: Number(
-      pendingMining.toFixed(8)
-    ),
 
-    miningPrincipal: Number(
-      principal.toFixed(8)
-    ),
+    usdt:
+      Number(
+        usdt.toFixed(8)
+      ),
+
+
+    /*
+      Current accumulated amount
+      waiting to be claimed.
+    */
+
+    miningAccrued:
+      Number(
+        miningAccrued.toFixed(8)
+      ),
+
+
+    /*
+      Total display balance.
+    */
+
+    totalBalance:
+      Number(
+        (
+          coins +
+          usdt +
+          miningAccrued
+        ).toFixed(8)
+      ),
+
+
+    /* ---------------------------------------
+       NORMAL MINING
+    --------------------------------------- */
+
+    normalMiningDaily:
+      Number(
+        normalDailyIncome.toFixed(8)
+      ),
+
+
+    normalMiningHour:
+      Number(
+        (
+          normalDailyIncome / 24
+        ).toFixed(8)
+      ),
+
+
+    /* ---------------------------------------
+       TOP-UP BOOST MINING
+    --------------------------------------- */
+
+    miningPrincipal:
+      Number(
+        principal.toFixed(8)
+      ),
+
 
     miningActive:
       !!u.miningActive,
 
+
     miningRateDaily:
-      rate,
+      Number(
+        boostDailyRate.toFixed(8)
+      ),
 
-    incomeHour: Number(
-      (principal * rate / 24).toFixed(8)
-    ),
 
-    incomeDay: Number(
-      (principal * rate).toFixed(8)
-    ),
+    boostMiningDaily:
+      Number(
+        boostDailyIncome.toFixed(8)
+      ),
 
-    incomeMonth: Number(
-      (principal * rate * 30).toFixed(8)
-    ),
 
-    referralIncome: Number(
-      Number(u.referralIncome || 0).toFixed(8)
-    ),
+    /* ---------------------------------------
+       TOTAL INCOME
+    --------------------------------------- */
 
-    referralCoins: Number(
-      Number(u.referralCoins || 0).toFixed(4)
-    ),
+    incomeHour:
+      Number(
+        (
+          totalDailyIncome / 24
+        ).toFixed(8)
+      ),
 
-    withdrawnUsdt: Number(
-      Number(u.withdrawnUsdt || 0).toFixed(8)
-    ),
+
+    incomeDay:
+      Number(
+        totalDailyIncome.toFixed(8)
+      ),
+
+
+    incomeMonth:
+      Number(
+        (
+          totalDailyIncome * 30
+        ).toFixed(8)
+      ),
+
+
+    referralIncome:
+      Number(
+        safeNumber(
+          u.referralIncome
+        ).toFixed(8)
+      ),
+
+
+    referralCoins:
+      Number(
+        safeNumber(
+          u.referralCoins
+        ).toFixed(4)
+      ),
+
+
+    withdrawnUsdt:
+      Number(
+        safeNumber(
+          u.withdrawnUsdt
+        ).toFixed(8)
+      ),
+
 
     referralCount:
-      u.referralCount || 0,
+      safeNumber(
+        u.referralCount
+      ),
+
 
     gifts:
-      u.gifts || 0,
+      safeNumber(
+        u.gifts
+      ),
+
 
     language:
-      u.language || "English",
+      u.language ||
+      "English",
+
 
     theme:
-      u.theme || "dark",
+      u.theme ||
+      "dark",
+
 
     walletAddress:
-      u.walletAddress || "",
+      u.walletAddress ||
+      "",
+
 
     walletName:
-      u.walletName || ""
+      u.walletName ||
+      ""
+
   };
+
 }
 
 
@@ -327,10 +766,13 @@ function serializeUser(u) {
 
 async function seedDefaults() {
 
-  /* ---------------- FAQ ---------------- */
+  /* -----------------------------------------
+     FAQ
+  ----------------------------------------- */
 
   const faqCount =
     await FAQ.countDocuments();
+
 
   if (!faqCount) {
 
@@ -342,127 +784,147 @@ async function seedDefaults() {
       ],
 
       [
-        "How does auto mining work?",
-        "Mining is calculated on the server from your active mining principal and elapsed time. You do not need to keep the Mini App open. When you return, the server settles the accumulated amount."
+        "How does normal mining work?",
+        "Every registered user receives normal mining automatically. You do not need to make a top-up to receive normal mining."
       ],
 
       [
-        "When does mining start?",
-        "Mining starts after an administrator confirms a valid top-up. The confirmed amount becomes your mining principal."
+        "How does boost mining work?",
+        "After a valid top-up is confirmed, the confirmed amount becomes your mining principal. The principal generates additional mining income while normal mining continues."
+      ],
+
+      [
+        "Does mining work when the app is closed?",
+        "Yes. Mining is calculated on the server from the last mining time. You do not need to keep the Mini App open."
+      ],
+
+      [
+        "When does boost mining start?",
+        "Boost mining starts after an administrator confirms a valid top-up."
       ],
 
       [
         "How do I top up?",
-        "Enter your amount in Top Up. The app shows the official receiving wallet and creates a pending payment request. Send USDT only through the configured network and wait for confirmation."
+        "Enter your amount in Top Up. The app creates a pending payment request and shows the configured receiving wallet. Send the required amount and wait for confirmation."
       ],
 
       [
         "What tasks can I complete?",
-        "Tasks can include joining the official Telegram channel, starting the configured bot, and visiting websites. Eligible tasks are checked before the reward is credited."
+        "Tasks can include joining the official Telegram channel, starting the configured bot and visiting websites."
       ],
 
       [
         "How is a channel task verified?",
-        "The bot checks your membership status through Telegram. The bot must have the required permission in the configured channel."
+        "The bot checks your Telegram channel membership. The bot must have the required permission in the configured channel."
       ],
 
       [
         "How does a bot-start task work?",
-        "Open the target bot from the task. For a Lucky Fest bot-start task, your Telegram account is verified when the bot has received your /start event."
+        "Open the configured bot and press Start, then return to the Mini App and verify the task."
       ],
 
       [
         "How does a website task work?",
-        "Open the task link and keep the page open for the required time. Then return to the Mini App and press Verify."
+        "Open the task link and keep it open for the required time. Then return to the Mini App and press Verify."
       ],
 
       [
         "How do referrals work?",
-        "Your referral link can reward coins and gifts for successful registrations. The configured multi-level program can also distribute eligible referral income."
+        "Your referral link can reward coins and gifts for successful registrations."
       ],
 
       [
         "What is the minimum withdrawal?",
-        "The minimum withdrawal is controlled by the MIN_WITHDRAW_USDT setting on the server."
+        "The minimum withdrawal is controlled by the MIN_WITHDRAW_USDT server setting."
       ],
 
       [
         "Can I connect a wallet?",
-        "Yes. Use Wallet Connect in Account. TON Connect opens a secure wallet picker for supported TON wallets without exposing your private keys."
-      ],
-
-      [
-        "Can I use Tonkeeper?",
-        "If Tonkeeper is available in the TON Connect wallet picker on your device, you can connect it from Wallet Connect."
+        "Yes. Use Wallet Connect in Account. TON Connect opens a supported wallet picker without exposing private keys."
       ],
 
       [
         "Where can I see transactions?",
-        "Open Account → Operations to see your recent top-ups, mining claims, withdrawals, task rewards and referral activity."
+        "Open Account → Operations to see recent top-ups, mining claims, withdrawals, task rewards and referral activity."
       ],
 
       [
         "How do I change language?",
-        "Open Account → Language and choose one of the available languages. The preference is saved to your account."
+        "Open Account → Language and choose one of the available languages."
       ],
 
       [
         "How do I change theme?",
-        "Open Account → Theme. Light and Dark are saved to your Telegram account and restored on the next launch."
+        "Open Account → Theme and choose Light or Dark."
       ],
 
       [
         "How do I contact support?",
-        "Use the Help button. It opens the configured support account in Telegram."
-      ],
-
-      [
-        "Can I close the app while mining?",
-        "Yes. Mining is server-side. Closing Telegram or the Mini App does not stop an active mining session."
+        `Use the Help button or open https://t.me/${SUPPORT_USERNAME}.`
       ],
 
       [
         "Is payment automatically credited?",
-        "Not until a payment is actually verified. The app never pretends a blockchain transfer succeeded without confirmation."
+        "No. A pending payment does not activate boost mining until the payment is confirmed."
       ],
 
       [
         "What happens to a rejected top-up?",
-        "A rejected payment request does not increase your mining principal or balance."
+        "A rejected payment does not increase your mining principal."
       ],
 
       [
         "How do I open the official channel?",
         `Use the channel task or open ${CHANNEL_URL}.`
       ]
+
     ];
 
+
     await FAQ.insertMany(
-      faqs.map((x, i) => ({
-        question: x[0],
-        answer: x[1],
-        order: i + 1
-      }))
+
+      faqs.map(
+        (x, i) => ({
+
+          question:
+            x[0],
+
+          answer:
+            x[1],
+
+          order:
+            i + 1
+
+        })
+      )
+
     );
+
   }
 
 
-  /* ---------------- TASKS ---------------- */
+  /* -----------------------------------------
+     TASKS
+  ----------------------------------------- */
 
   const taskCount =
     await Task.countDocuments();
+
 
   if (!taskCount) {
 
     await Task.insertMany([
 
       {
-        title: "Join Lucky Fest Official",
+
+        title:
+          "Join Lucky Fest Official",
 
         description:
           "Join the official Telegram channel and verify your membership.",
 
-        type: "channel_join",
+        type:
+          "channel_join",
 
         target:
           `@${CHANNEL_USERNAME}`,
@@ -470,18 +932,25 @@ async function seedDefaults() {
         url:
           CHANNEL_URL,
 
-        rewardCoins: 25,
+        rewardCoins:
+          25,
 
-        order: 1
+        order:
+          1
+
       },
 
+
       {
-        title: "Start Lucky Fest Bot",
+
+        title:
+          "Start Lucky Fest Bot",
 
         description:
           "Open the bot and press Start. Then return here to verify.",
 
-        type: "bot_start",
+        type:
+          "bot_start",
 
         target:
           process.env.BOT_USERNAME || "",
@@ -491,34 +960,47 @@ async function seedDefaults() {
             ? `https://t.me/${process.env.BOT_USERNAME}`
             : "",
 
-        rewardCoins: 20,
+        rewardCoins:
+          20,
 
-        order: 2
+        order:
+          2
+
       },
 
+
       {
-        title: "Visit our website",
+
+        title:
+          "Visit our website",
 
         description:
           "Open the website and stay for a few seconds, then return to verify.",
 
-        type: "website_visit",
+        type:
+          "website_visit",
 
         target:
           "official-site",
 
         url:
-          process.env.WEB_APP_URL || "",
+          WEB_APP_URL,
 
-        rewardCoins: 15,
+        rewardCoins:
+          15,
 
-        minVisitSeconds: 6,
+        minVisitSeconds:
+          6,
 
-        order: 3
+        order:
+          3
+
       }
 
     ]);
+
   }
+
 }
 
 
@@ -535,20 +1017,23 @@ app.get(
 
     res.json({
 
-      url: origin,
+      url:
+        origin,
 
-      name: "Lucky Fest",
+      name:
+        "Lucky Fest",
 
       iconUrl:
         `${origin}/assets/assistant-logo.jpg`
 
     });
+
   }
 );
 
 
 /* =========================================================
-   CONFIG
+   CONFIG API
 ========================================================= */
 
 app.get(
@@ -568,11 +1053,22 @@ app.get(
         CHANNEL_USERNAME,
 
       support:
-        "https://t.me/assistant_bd",
+        `https://t.me/${SUPPORT_USERNAME}`,
 
       botUsername:
-        process.env.BOT_USERNAME || ""
+        process.env.BOT_USERNAME || "",
+
+      normalMiningDaily:
+        NORMAL_MINING_DAILY_RATE,
+
+      boostMiningDaily:
+        MINING_DAILY_RATE,
+
+      minWithdrawUsdt:
+        MIN_WITHDRAW_USDT
+
     });
+
   }
 );
 
@@ -586,15 +1082,21 @@ app.get(
   (_req, res) => {
 
     res.json({
-      ok: true,
-      service: "lucky-fest"
+
+      ok:
+        true,
+
+      service:
+        "lucky-fest"
+
     });
+
   }
 );
 
 
 /* =========================================================
-   ME
+   CURRENT USER
 ========================================================= */
 
 app.get(
@@ -609,7 +1111,13 @@ app.get(
           req.tgUser
         );
 
+
+      /*
+        Make sure latest mining is settled.
+      */
+
       await settleMining(user);
+
 
       res.json(
         serializeUser(user)
@@ -617,12 +1125,20 @@ app.get(
 
     } catch (e) {
 
-      console.error(e);
+      console.error(
+        "GET /api/me error:",
+        e
+      );
 
       res.status(500).json({
-        error: "Failed to load account"
+
+        error:
+          "Failed to load account"
+
       });
+
     }
+
   }
 );
 
@@ -636,41 +1152,65 @@ app.post(
   auth,
   async (req, res) => {
 
-    await Presence.findOneAndUpdate(
+    try {
 
-      {
-        telegramId:
-          String(req.tgUser.id)
-      },
+      await Presence.findOneAndUpdate(
 
-      {
-        telegramId:
-          String(req.tgUser.id),
+        {
+          telegramId:
+            String(req.tgUser.id)
+        },
 
-        lastSeenAt:
-          new Date()
-      },
+        {
 
-      {
-        upsert: true
-      }
-    );
+          telegramId:
+            String(req.tgUser.id),
 
-    const online =
-      await Presence.countDocuments({
+          lastSeenAt:
+            new Date()
 
-        lastSeenAt: {
-          $gte:
-            new Date(
-              Date.now() - 45000
-            )
+        },
+
+        {
+          upsert:
+            true
         }
 
+      );
+
+
+      const online =
+        await Presence.countDocuments({
+
+          lastSeenAt: {
+            $gte:
+              new Date(
+                Date.now() -
+                45000
+              )
+          }
+
+        });
+
+
+      res.json({
+        online
       });
 
-    res.json({
-      online
-    });
+    } catch (error) {
+
+      console.error(
+        "Presence error:",
+        error
+      );
+
+      res.status(500).json({
+        error:
+          "Presence update failed"
+      });
+
+    }
+
   }
 );
 
@@ -689,23 +1229,30 @@ app.get(
         req.tgUser
       );
 
+
     const direct =
       await User.find({
+
         referrerTelegramId:
           user.telegramId
+
       })
         .select(
           "telegramId username firstName lastName createdAt"
         )
         .sort({
-          createdAt: -1
+          createdAt:
+            -1
         })
         .limit(100);
+
 
     res.json({
 
       referralCount:
-        user.referralCount,
+        safeNumber(
+          user.referralCount
+        ),
 
       direct:
         direct.map(x => ({
@@ -714,20 +1261,28 @@ app.get(
             x.telegramId,
 
           name:
-            [x.firstName, x.lastName]
+            [
+              x.firstName,
+              x.lastName
+            ]
               .filter(Boolean)
-              .join(" ") ||
-            x.username ||
-            "User",
+              .join(" ")
+              ||
+              x.username
+              ||
+              "User",
 
           username:
-            x.username || "",
+            x.username ||
+            "",
 
           joinedAt:
             x.createdAt
 
         }))
+
     });
+
   }
 );
 
@@ -746,41 +1301,62 @@ app.get(
         req.tgUser
       );
 
-    let invitedBy = null;
 
-    if (user.referrerTelegramId) {
+    let invitedBy =
+      null;
+
+
+    if (
+      user.referrerTelegramId
+    ) {
 
       const r =
         await User.findOne({
+
           telegramId:
             user.referrerTelegramId
+
         });
+
 
       if (r) {
 
         invitedBy = {
 
           name:
-            [r.firstName, r.lastName]
+            [
+              r.firstName,
+              r.lastName
+            ]
               .filter(Boolean)
-              .join(" ") ||
-            "User",
+              .join(" ")
+              ||
+              "User",
 
           username:
-            r.username || ""
+            r.username ||
+            ""
+
         };
+
       }
+
     }
+
 
     const operations =
       await Transaction.find({
+
         telegramId:
           user.telegramId
+
       })
         .sort({
-          createdAt: -1
+          createdAt:
+            -1
         })
         .limit(100);
+
 
     res.json({
 
@@ -790,7 +1366,9 @@ app.get(
       invitedBy,
 
       operations
+
     });
+
   }
 );
 
@@ -804,16 +1382,20 @@ app.get(
   auth,
   async (_req, res) => {
 
-    const faq =
+    res.json(
+
       await FAQ.find({
-        active: true
+        active:
+          true
       })
         .sort({
-          order: 1
+          order:
+            1
         })
-        .limit(50);
+        .limit(50)
 
-    res.json(faq);
+    );
+
   }
 );
 
@@ -832,19 +1414,23 @@ app.get(
         req.tgUser
       );
 
-    const transactions =
-      await Transaction.find({
-        telegramId:
-          user.telegramId
-      })
-        .sort({
-          createdAt: -1
-        })
-        .limit(100);
 
     res.json(
-      transactions
+
+      await Transaction.find({
+
+        telegramId:
+          user.telegramId
+
+      })
+        .sort({
+          createdAt:
+            -1
+        })
+        .limit(100)
+
     );
+
   }
 );
 
@@ -860,26 +1446,39 @@ app.get(
 
     const tasks =
       await Task.find({
-        active: true
+        active:
+          true
       })
         .sort({
-          order: 1,
-          createdAt: 1
+          order:
+            1,
+
+          createdAt:
+            1
         });
+
 
     const completions =
       await TaskCompletion.find({
+
         telegramId:
           String(req.tgUser.id)
+
       });
+
 
     const map =
       new Map(
-        completions.map(c => [
-          String(c.taskId),
-          c
-        ])
+
+        completions.map(
+          c => [
+            String(c.taskId),
+            c
+          ]
+        )
+
       );
+
 
     res.json(
 
@@ -890,6 +1489,7 @@ app.get(
             String(t._id)
           );
 
+
         return {
 
           ...t.toObject(),
@@ -897,22 +1497,28 @@ app.get(
           completion:
             completion
               ? {
+
                   status:
                     completion.status,
 
                   startedAt:
                     completion.startedAt
+
                 }
               : null
+
         };
+
       })
+
     );
+
   }
 );
 
 
 /* =========================================================
-   START TASK
+   TASK START
 ========================================================= */
 
 app.post(
@@ -920,88 +1526,129 @@ app.post(
   auth,
   async (req, res) => {
 
-    const task =
-      await Task.findOne({
+    try {
 
-        _id:
-          req.params.id,
+      const task =
+        await Task.findOne({
 
-        active:
-          true
+          _id:
+            req.params.id,
+
+          active:
+            true
+
+        });
+
+
+      if (!task) {
+
+        return res.status(404).json({
+
+          error:
+            "Task not found."
+
+        });
+
+      }
+
+
+      const telegramId =
+        String(
+          req.tgUser.id
+        );
+
+
+      const existing =
+        await TaskCompletion.findOne({
+
+          telegramId,
+
+          taskId:
+            task._id
+
+        });
+
+
+      if (
+        existing?.status ===
+        "completed"
+      ) {
+
+        return res.json({
+
+          ok:
+            true,
+
+          completed:
+            true,
+
+          message:
+            "Task already completed."
+
+        });
+
+      }
+
+
+      const completion =
+        existing ||
+        new TaskCompletion({
+
+          telegramId,
+
+          taskId:
+            task._id
+
+        });
+
+
+      completion.status =
+        "started";
+
+      completion.startedAt =
+        new Date();
+
+
+      await completion.save();
+
+
+      res.json({
+
+        ok:
+          true,
+
+        task,
+
+        verifyAfterSeconds:
+          task.type ===
+          "website_visit"
+            ? task.minVisitSeconds
+            : 0
 
       });
 
-    if (!task) {
+    } catch (error) {
 
-      return res.status(404).json({
+      console.error(
+        "Task start error:",
+        error
+      );
+
+      res.status(500).json({
+
         error:
-          "Task not found."
+          "Failed to start task."
+
       });
+
     }
 
-    const existing =
-      await TaskCompletion.findOne({
-
-        telegramId:
-          String(req.tgUser.id),
-
-        taskId:
-          task._id
-
-      });
-
-    if (
-      existing?.status ===
-      "completed"
-    ) {
-
-      return res.json({
-
-        ok: true,
-
-        completed: true,
-
-        message:
-          "Task already completed."
-      });
-    }
-
-    const completion =
-      existing ||
-      new TaskCompletion({
-
-        telegramId:
-          String(req.tgUser.id),
-
-        taskId:
-          task._id
-      });
-
-    completion.status =
-      "started";
-
-    completion.startedAt =
-      new Date();
-
-    await completion.save();
-
-    res.json({
-
-      ok: true,
-
-      task,
-
-      verifyAfterSeconds:
-        task.type === "website_visit"
-          ? task.minVisitSeconds
-          : 0
-    });
   }
 );
 
 
 /* =========================================================
-   VERIFY TASK
+   TASK VERIFY
 ========================================================= */
 
 app.post(
@@ -1009,246 +1656,327 @@ app.post(
   auth,
   async (req, res) => {
 
-    const task =
-      await Task.findOne({
+    try {
 
-        _id:
-          req.params.id,
+      const task =
+        await Task.findOne({
 
-        active:
-          true
+          _id:
+            req.params.id,
 
-      });
+          active:
+            true
 
-    if (!task) {
-
-      return res.status(404).json({
-        error:
-          "Task not found."
-      });
-    }
-
-    const user =
-      await getOrCreateUser(
-        req.tgUser
-      );
-
-    const completion =
-      await TaskCompletion.findOne({
-
-        telegramId:
-          user.telegramId,
-
-        taskId:
-          task._id
-
-      });
-
-    if (!completion) {
-
-      return res.status(400).json({
-        error:
-          "Start the task first."
-      });
-    }
-
-    if (
-      completion.status ===
-      "completed"
-    ) {
-
-      return res.json({
-
-        ok: true,
-
-        completed: true,
-
-        user:
-          serializeUser(user)
-      });
-    }
+        });
 
 
-    /* ---------------- WEBSITE ---------------- */
+      if (!task) {
 
-    if (
-      task.type ===
-      "website_visit"
-    ) {
+        return res.status(404).json({
 
-      if (!completion.startedAt) {
+          error:
+            "Task not found."
+
+        });
+
+      }
+
+
+      const user =
+        await getOrCreateUser(
+          req.tgUser
+        );
+
+
+      const completion =
+        await TaskCompletion.findOne({
+
+          telegramId:
+            user.telegramId,
+
+          taskId:
+            task._id
+
+        });
+
+
+      if (!completion) {
 
         return res.status(400).json({
+
           error:
             "Start the task first."
+
         });
+
       }
 
-      const seconds =
-        (
-          Date.now() -
-          completion.startedAt.getTime()
-        ) / 1000;
 
       if (
-        seconds <
-        task.minVisitSeconds
+        completion.status ===
+        "completed"
       ) {
 
-        return res.status(400).json({
+        return res.json({
 
-          error:
-            `Please keep the task open for ${task.minVisitSeconds} seconds.`
+          ok:
+            true,
+
+          completed:
+            true,
+
+          user:
+            serializeUser(user)
+
         });
-      }
-    }
 
-
-    /* ---------------- CHANNEL ---------------- */
-
-    if (
-      task.type ===
-      "channel_join"
-    ) {
-
-      if (!global.botInstance) {
-
-        return res.status(503).json({
-
-          error:
-            "Bot is still starting. Try again shortly."
-        });
       }
 
-      try {
 
-        const member =
-          await global.botInstance.telegram.getChatMember(
+      /* ---------------------------------------
+         WEBSITE TASK
+      --------------------------------------- */
 
-            task.target ||
-              `@${CHANNEL_USERNAME}`,
+      if (
+        task.type ===
+        "website_visit"
+      ) {
 
-            Number(
-              user.telegramId
-            )
-          );
+        const seconds =
+          (
+            Date.now() -
+            completion.startedAt.getTime()
+          ) / 1000;
+
 
         if (
-          ![
-            "creator",
-            "administrator",
-            "member"
-          ].includes(
-            member.status
-          )
+          seconds <
+          task.minVisitSeconds
         ) {
 
           return res.status(400).json({
 
             error:
-              "Join the Telegram channel first."
+              `Please keep the task open for ${task.minVisitSeconds} seconds.`
+
           });
+
         }
 
-      } catch (e) {
-
-        console.error(
-          "Channel verification failed:",
-          e.message
-        );
-
-        return res.status(400).json({
-
-          error:
-            "Channel verification failed. Make sure the bot is an administrator in the channel."
-        });
       }
-    }
 
 
-    /* ---------------- BOT START ---------------- */
-
-    if (
-      task.type ===
-      "bot_start"
-    ) {
+      /* ---------------------------------------
+         CHANNEL TASK
+      --------------------------------------- */
 
       if (
-        !process.env.BOT_USERNAME ||
-        task.target ===
-          process.env.BOT_USERNAME
+        task.type ===
+        "channel_join"
       ) {
 
-        // Bot-start verification
-        // handled by the bot backend.
+        if (
+          !global.botInstance
+        ) {
 
-      } else {
+          return res.status(503).json({
 
-        return res.status(400).json({
+            error:
+              "Bot is still starting. Try again shortly."
 
-          error:
-            "This bot-start task requires its target bot to be configured for verification."
-        });
+          });
+
+        }
+
+
+        try {
+
+          const member =
+            await global.botInstance.telegram.getChatMember(
+
+              task.target ||
+              `@${CHANNEL_USERNAME}`,
+
+              Number(
+                user.telegramId
+              )
+
+            );
+
+
+          if (
+            ![
+              "creator",
+              "administrator",
+              "member"
+            ].includes(
+              member.status
+            )
+          ) {
+
+            return res.status(400).json({
+
+              error:
+                "Join the Telegram channel first."
+
+            });
+
+          }
+
+        } catch (e) {
+
+          console.error(
+            "Channel verification failed:",
+            e.message
+          );
+
+
+          return res.status(400).json({
+
+            error:
+              "Channel verification failed. Make sure the bot is an administrator in the channel."
+
+          });
+
+        }
+
       }
-    }
 
 
-    /* ---------------- COMPLETE ---------------- */
+      /* ---------------------------------------
+         BOT START TASK
+      --------------------------------------- */
 
-    completion.status =
-      "completed";
+      if (
+        task.type ===
+        "bot_start"
+      ) {
 
-    completion.completedAt =
-      new Date();
+        if (
+          !process.env.BOT_USERNAME ||
+          task.target ===
+          process.env.BOT_USERNAME
+        ) {
 
-    await completion.save();
+          /*
+            Existing bot-start behaviour.
+          */
 
-    user.coins =
-      Number(user.coins || 0) +
-      Number(task.rewardCoins || 0);
+        } else {
 
-    if (task.rewardUsdt) {
+          return res.status(400).json({
+
+            error:
+              "This bot-start task requires its target bot to be configured for verification."
+
+          });
+
+        }
+
+      }
+
+
+      /* ---------------------------------------
+         COMPLETE
+      --------------------------------------- */
+
+      completion.status =
+        "completed";
+
+      completion.completedAt =
+        new Date();
+
+
+      await completion.save();
+
+
+      const rewardCoins =
+        safeNumber(
+          task.rewardCoins
+        );
+
+
+      const rewardUsdt =
+        safeNumber(
+          task.rewardUsdt
+        );
+
+
+      user.coins =
+        safeNumber(
+          user.coins
+        ) +
+        rewardCoins;
+
 
       user.usdt =
-        Number(user.usdt || 0) +
-        Number(task.rewardUsdt);
+        safeNumber(
+          user.usdt
+        ) +
+        rewardUsdt;
+
+
+      await user.save();
+
+
+      await Transaction.create({
+
+        telegramId:
+          user.telegramId,
+
+        type:
+          "task",
+
+        coins:
+          rewardCoins,
+
+        amount:
+          rewardUsdt,
+
+        note:
+          task.title,
+
+        meta: {
+
+          taskId:
+            String(
+              task._id
+            )
+
+        }
+
+      });
+
+
+      res.json({
+
+        ok:
+          true,
+
+        message:
+          `Task complete! +${rewardCoins} coins`,
+
+        user:
+          serializeUser(user)
+
+      });
+
+    } catch (error) {
+
+      console.error(
+        "Task verify error:",
+        error
+      );
+
+      res.status(500).json({
+
+        error:
+          "Task verification failed."
+
+      });
+
     }
 
-    await user.save();
-
-    await Transaction.create({
-
-      telegramId:
-        user.telegramId,
-
-      type:
-        "task",
-
-      coins:
-        Number(task.rewardCoins || 0),
-
-      amount:
-        Number(task.rewardUsdt || 0),
-
-      note:
-        task.title,
-
-      meta: {
-        taskId:
-          String(task._id)
-      }
-    });
-
-    res.json({
-
-      ok: true,
-
-      message:
-        `Task complete! +${task.rewardCoins || 0} coins`,
-
-      user:
-        serializeUser(user)
-    });
   }
 );
 
@@ -1263,26 +1991,34 @@ app.post(
   async (req, res) => {
 
     const theme =
-      req.body.theme === "light"
+      req.body.theme ===
+      "light"
         ? "light"
         : "dark";
+
 
     const user =
       await getOrCreateUser(
         req.tgUser
       );
 
+
     user.theme =
       theme;
 
+
     await user.save();
+
 
     res.json({
 
-      ok: true,
+      ok:
+        true,
 
       theme
+
     });
+
   }
 );
 
@@ -1315,6 +2051,7 @@ app.post(
 
     ];
 
+
     const language =
       supported.includes(
         req.body.language
@@ -1322,22 +2059,29 @@ app.post(
         ? req.body.language
         : "English";
 
+
     const user =
       await getOrCreateUser(
         req.tgUser
       );
 
+
     user.language =
       language;
 
+
     await user.save();
+
 
     res.json({
 
-      ok: true,
+      ok:
+        true,
 
       language
+
     });
+
   }
 );
 
@@ -1356,18 +2100,24 @@ app.post(
         req.tgUser
       );
 
+
     const address =
       String(
         req.body.address || ""
       ).trim();
 
+
     const name =
       String(
         req.body.name ||
-          "TON Wallet"
+        "TON Wallet"
       )
         .trim()
-        .slice(0, 60);
+        .slice(
+          0,
+          60
+        );
+
 
     if (
       !address ||
@@ -1378,8 +2128,11 @@ app.post(
 
         error:
           "Enter a valid wallet address."
+
       });
+
     }
+
 
     user.walletAddress =
       address;
@@ -1387,15 +2140,20 @@ app.post(
     user.walletName =
       name;
 
+
     await user.save();
+
 
     res.json({
 
-      ok: true,
+      ok:
+        true,
 
       user:
         serializeUser(user)
+
     });
+
   }
 );
 
@@ -1414,21 +2172,85 @@ app.delete(
         req.tgUser
       );
 
+
     user.walletAddress =
       "";
 
     user.walletName =
       "";
 
+
     await user.save();
+
 
     res.json({
 
-      ok: true,
+      ok:
+        true,
 
       user:
         serializeUser(user)
+
     });
+
+  }
+);
+
+
+/* =========================================================
+   MINING STATUS
+========================================================= */
+
+app.get(
+  "/api/mining",
+  auth,
+  async (req, res) => {
+
+    try {
+
+      const user =
+        await getOrCreateUser(
+          req.tgUser
+        );
+
+
+      /*
+        Settle latest normal +
+        boost mining.
+      */
+
+      const earned =
+        await settleMining(user);
+
+
+      res.json({
+
+        ok:
+          true,
+
+        earned,
+
+        user:
+          serializeUser(user)
+
+      });
+
+    } catch (error) {
+
+      console.error(
+        "Mining status error:",
+        error
+      );
+
+      res.status(500).json({
+
+        error:
+          "Failed to load mining status."
+
+      });
+
+    }
+
   }
 );
 
@@ -1442,75 +2264,128 @@ app.post(
   auth,
   async (req, res) => {
 
-    const user =
-      await getOrCreateUser(
-        req.tgUser
+    try {
+
+      const user =
+        await getOrCreateUser(
+          req.tgUser
+        );
+
+
+      /*
+        First calculate everything
+        accumulated since last update.
+      */
+
+      await settleMining(user);
+
+
+      const amount =
+        safeNumber(
+          user.miningAccrued
+        );
+
+
+      if (
+        amount <= 0
+      ) {
+
+        return res.status(400).json({
+
+          error:
+            "No mining profit is ready to claim yet."
+
+        });
+
+      }
+
+
+      /*
+        Move mining amount to
+        actual USDT balance.
+      */
+
+      user.miningAccrued =
+        0;
+
+
+      user.usdt =
+        safeNumber(
+          user.usdt
+        ) +
+        amount;
+
+
+      user.claimedUsdt =
+        safeNumber(
+          user.claimedUsdt
+        ) +
+        amount;
+
+
+      user.lastClaimAt =
+        new Date();
+
+
+      await user.save();
+
+
+      await Transaction.create({
+
+        telegramId:
+          user.telegramId,
+
+        type:
+          "claim",
+
+        amount,
+
+        note:
+          "Normal + Boost auto mining profit claim",
+
+        status:
+          "completed"
+
+      });
+
+
+      res.json({
+
+        ok:
+          true,
+
+        claimed:
+          Number(
+            amount.toFixed(8)
+          ),
+
+        user:
+          serializeUser(user)
+
+      });
+
+    } catch (error) {
+
+      console.error(
+        "Claim error:",
+        error
       );
 
-    await settleMining(
-      user
-    );
-
-    const amount =
-      Number(
-        user.miningAccrued || 0
-      );
-
-    if (amount <= 0) {
-
-      return res.status(400).json({
+      res.status(500).json({
 
         error:
-          "No mining profit is ready to claim yet."
+          "Failed to claim mining profit."
+
       });
+
     }
 
-    user.miningAccrued =
-      0;
-
-    user.usdt =
-      Number(user.usdt || 0) +
-      amount;
-
-    user.claimedUsdt =
-      Number(user.claimedUsdt || 0) +
-      amount;
-
-    user.lastClaimAt =
-      new Date();
-
-    await user.save();
-
-    await Transaction.create({
-
-      telegramId:
-        user.telegramId,
-
-      type:
-        "claim",
-
-      amount,
-
-      note:
-        "Auto mining profit claim"
-    });
-
-    res.json({
-
-      ok: true,
-
-      user:
-        serializeUser(user),
-
-      claimed:
-        amount
-    });
   }
 );
 
 
 /* =========================================================
-   TOP UP
+   TOP-UP REQUEST
 ========================================================= */
 
 app.post(
@@ -1518,87 +2393,136 @@ app.post(
   auth,
   async (req, res) => {
 
-    const user =
-      await getOrCreateUser(
-        req.tgUser
-      );
+    try {
 
-    const amount =
-      Number(req.body.amount);
+      const user =
+        await getOrCreateUser(
+          req.tgUser
+        );
 
-    if (
-      !Number.isFinite(amount) ||
-      amount <= 0 ||
-      amount > 100000
-    ) {
 
-      return res.status(400).json({
+      const amount =
+        Number(
+          req.body.amount
+        );
 
-        error:
-          "Enter a valid top-up amount."
-      });
-    }
 
-    const tx =
-      await Transaction.create({
+      if (
+        !Number.isFinite(amount) ||
+        amount <= 0 ||
+        amount > 100000
+      ) {
 
-        telegramId:
-          user.telegramId,
+        return res.status(400).json({
 
-        type:
-          "topup",
+          error:
+            "Enter a valid top-up amount."
+
+        });
+
+      }
+
+
+      /*
+        IMPORTANT:
+
+        Do NOT activate mining here.
+
+        Payment is pending until admin /
+        payment verification confirms it.
+      */
+
+      const tx =
+        await Transaction.create({
+
+          telegramId:
+            user.telegramId,
+
+          type:
+            "topup",
+
+          amount,
+
+          status:
+            "pending",
+
+          note:
+            "Top-up request"
+
+        });
+
+
+      /* ---------------------------------------
+         ADMIN NOTIFICATION
+      --------------------------------------- */
+
+      if (
+        process.env.ADMIN_CHAT_ID &&
+        global.botInstance
+      ) {
+
+        try {
+
+          await global.botInstance.telegram.sendMessage(
+
+            process.env.ADMIN_CHAT_ID,
+
+            `💵 Top-up request
+
+User: ${user.telegramId}
+Amount: ${amount} USDT
+Request: ${tx._id}`
+
+          );
+
+        } catch (e) {
+
+          console.error(
+            "Admin notification failed:",
+            e.message
+          );
+
+        }
+
+      }
+
+
+      res.json({
+
+        ok:
+          true,
+
+        transactionId:
+          String(
+            tx._id
+          ),
+
+        wallet:
+          TOPUP_WALLET,
 
         amount,
 
-        status:
-          "pending",
+        message:
+          `Send exactly ${amount} USDT to the wallet shown, then wait for payment confirmation.`
 
-        note:
-          "Top-up request"
       });
 
-    if (
-      process.env.ADMIN_CHAT_ID &&
-      global.botInstance
-    ) {
+    } catch (error) {
 
-      try {
+      console.error(
+        "Top-up error:",
+        error
+      );
 
-        await global.botInstance.telegram.sendMessage(
+      res.status(500).json({
 
-          process.env.ADMIN_CHAT_ID,
+        error:
+          "Failed to create top-up request."
 
-          `💵 Top-up request
+      });
 
-User: ${user.telegramId}
-
-Amount: ${amount} USDT
-
-Request: ${tx._id}`
-        );
-
-      } catch (e) {
-
-        console.error(
-          "Admin notification failed:",
-          e.message
-        );
-      }
     }
 
-    res.json({
-
-      ok: true,
-
-      transactionId:
-        String(tx._id),
-
-      wallet:
-        TOPUP_WALLET,
-
-      message:
-        `Send exactly ${amount} USDT to the wallet shown, then wait for payment confirmation.`
-    });
   }
 );
 
@@ -1612,142 +2536,200 @@ app.post(
   auth,
   async (req, res) => {
 
-    const user =
-      await getOrCreateUser(
-        req.tgUser
-      );
+    try {
 
-    await settleMining(
-      user
-    );
+      const user =
+        await getOrCreateUser(
+          req.tgUser
+        );
 
-    const amount =
-      Number(req.body.amount);
 
-    const wallet =
-      String(
-        req.body.wallet ||
-        user.walletAddress ||
-        ""
-      ).trim();
+      /*
+        Settle latest mining first.
+      */
 
-    const min =
-      Number(
-        process.env.MIN_WITHDRAW_USDT || 1
-      );
+      await settleMining(user);
 
-    if (
-      !Number.isFinite(amount) ||
-      amount < min
-    ) {
 
-      return res.status(400).json({
+      const amount =
+        Number(
+          req.body.amount
+        );
 
-        error:
-          `Minimum withdrawal is ${min} USDT.`
-      });
-    }
 
-    if (
-      !wallet ||
-      wallet.length < 20
-    ) {
+      const wallet =
+        String(
+          req.body.wallet ||
+          user.walletAddress ||
+          ""
+        ).trim();
 
-      return res.status(400).json({
 
-        error:
-          "Connect or enter a valid wallet address."
-      });
-    }
+      if (
+        !Number.isFinite(amount) ||
+        amount < MIN_WITHDRAW_USDT
+      ) {
 
-    if (
-      amount >
-      Number(user.usdt || 0)
-    ) {
+        return res.status(400).json({
 
-      return res.status(400).json({
+          error:
+            `Minimum withdrawal is ${MIN_WITHDRAW_USDT} USDT.`
 
-        error:
-          "Insufficient USDT balance."
-      });
-    }
+        });
 
-    user.usdt =
-      Number(user.usdt || 0) -
-      amount;
+      }
 
-    user.withdrawnUsdt =
-      Number(user.withdrawnUsdt || 0) +
-      amount;
 
-    user.walletAddress =
-      wallet;
+      if (
+        !wallet ||
+        wallet.length < 20
+      ) {
 
-    await user.save();
+        return res.status(400).json({
 
-    const tx =
-      await Transaction.create({
+          error:
+            "Connect or enter a valid wallet address."
 
-        telegramId:
-          user.telegramId,
+        });
 
-        type:
-          "withdraw",
+      }
 
-        amount,
 
-        status:
-          "pending",
+      if (
+        amount >
+        safeNumber(
+          user.usdt
+        )
+      ) {
 
-        note:
-          "Withdrawal request",
+        return res.status(400).json({
 
-        meta: {
-          wallet
-        }
-      });
+          error:
+            "Insufficient USDT balance."
 
-    if (
-      process.env.ADMIN_CHAT_ID &&
-      global.botInstance
-    ) {
+        });
 
-      try {
+      }
 
-        await global.botInstance.telegram.sendMessage(
 
-          process.env.ADMIN_CHAT_ID,
+      /*
+        Reserve balance immediately.
+      */
 
-          `💸 Withdrawal request
+      user.usdt =
+        safeNumber(
+          user.usdt
+        ) -
+        amount;
+
+
+      user.withdrawnUsdt =
+        safeNumber(
+          user.withdrawnUsdt
+        ) +
+        amount;
+
+
+      user.walletAddress =
+        wallet;
+
+
+      await user.save();
+
+
+      const tx =
+        await Transaction.create({
+
+          telegramId:
+            user.telegramId,
+
+          type:
+            "withdraw",
+
+          amount,
+
+          status:
+            "pending",
+
+          note:
+            "Withdrawal request",
+
+          meta: {
+
+            wallet
+
+          }
+
+        });
+
+
+      /* ---------------------------------------
+         ADMIN NOTIFICATION
+      --------------------------------------- */
+
+      if (
+        process.env.ADMIN_CHAT_ID &&
+        global.botInstance
+      ) {
+
+        try {
+
+          await global.botInstance.telegram.sendMessage(
+
+            process.env.ADMIN_CHAT_ID,
+
+            `💸 Withdrawal request
 
 User: ${user.telegramId}
-
 Amount: ${amount} USDT
-
 Wallet: ${wallet}
-
 Request: ${tx._id}`
-        );
 
-      } catch (e) {
+          );
 
-        console.error(
-          "Admin notification failed:",
-          e.message
-        );
+        } catch (e) {
+
+          console.error(
+            "Admin withdrawal notification failed:",
+            e.message
+          );
+
+        }
+
       }
+
+
+      res.json({
+
+        ok:
+          true,
+
+        user:
+          serializeUser(user),
+
+        transactionId:
+          String(
+            tx._id
+          )
+
+      });
+
+    } catch (error) {
+
+      console.error(
+        "Withdrawal error:",
+        error
+      );
+
+      res.status(500).json({
+
+        error:
+          "Failed to create withdrawal request."
+
+      });
+
     }
 
-    res.json({
-
-      ok: true,
-
-      user:
-        serializeUser(user),
-
-      transactionId:
-        String(tx._id)
-    });
   }
 );
 
@@ -1761,13 +2743,55 @@ app.post(
   auth,
   async (req, res) => {
 
-    const user =
-      await getOrCreateUser(
-        req.tgUser
-      );
+    try {
 
-    const exists =
-      await Transaction.findOne({
+      const user =
+        await getOrCreateUser(
+          req.tgUser
+        );
+
+
+      const exists =
+        await Transaction.findOne({
+
+          telegramId:
+            user.telegramId,
+
+          type:
+            "subscribe",
+
+          status:
+            "completed"
+
+        });
+
+
+      if (exists) {
+
+        return res.json({
+
+          ok:
+            true,
+
+          message:
+            "Reward already claimed."
+
+        });
+
+      }
+
+
+      user.coins =
+        safeNumber(
+          user.coins
+        ) +
+        10;
+
+
+      await user.save();
+
+
+      await Transaction.create({
 
         telegramId:
           user.telegramId,
@@ -1775,80 +2799,138 @@ app.post(
         type:
           "subscribe",
 
+        coins:
+          10,
+
+        note:
+          "Channel subscription reward",
+
         status:
           "completed"
+
       });
 
-    if (exists) {
 
-      return res.json({
+      res.json({
 
-        ok: true,
+        ok:
+          true,
 
-        message:
-          "Reward already claimed."
+        user:
+          serializeUser(user)
+
       });
+
+    } catch (error) {
+
+      console.error(
+        "Subscribe reward error:",
+        error
+      );
+
+      res.status(500).json({
+
+        error:
+          "Failed to claim subscription reward."
+
+      });
+
     }
 
-    user.coins =
-      Number(user.coins || 0) +
-      10;
-
-    await user.save();
-
-    await Transaction.create({
-
-      telegramId:
-        user.telegramId,
-
-      type:
-        "subscribe",
-
-      coins:
-        10,
-
-      status:
-        "completed",
-
-      note:
-        "Channel subscription reward"
-    });
-
-    res.json({
-
-      ok: true,
-
-      user:
-        serializeUser(user)
-    });
   }
 );
 
 
 /* =========================================================
    SPA FALLBACK
-   IMPORTANT:
-   This MUST stay AFTER /api routes and static middleware.
 ========================================================= */
+
+/*
+  Express 5 compatible fallback.
+*/
 
 app.get(
   "/{*splat}",
-  (req, res) => {
-
-    /*
-      API route হলে এখানে আসবে না।
-      CSS/JS/image থাকলে express.static আগেই serve করবে।
-      অন্য সব frontend route index.html পাবে।
-    */
+  (_req, res) => {
 
     res.sendFile(
       path.join(
-        publicPath,
+        process.cwd(),
+        "public",
         "index.html"
       )
     );
+
   }
 );
+
+
+/* =========================================================
+   BACKGROUND MINING HEARTBEAT
+========================================================= */
+
+function startMiningHeartbeat() {
+
+  setInterval(
+    async () => {
+
+      try {
+
+        /*
+          Process active boost miners.
+        */
+
+        const users =
+          await User.find({
+
+            miningActive:
+              true,
+
+            miningPrincipal: {
+              $gt:
+                0
+            }
+
+          }).limit(1000);
+
+
+        for (
+          const user of users
+        ) {
+
+          try {
+
+            await settleMining(
+              user
+            );
+
+          } catch (error) {
+
+            console.error(
+              `Mining settlement failed for ${user.telegramId}:`,
+              error.message
+            );
+
+          }
+
+        }
+
+      } catch (error) {
+
+        console.error(
+          "Mining heartbeat failed:",
+          error.message
+        );
+
+      }
+
+    },
+
+    60000
+
+  );
+
+}
 
 
 /* =========================================================
@@ -1859,9 +2941,21 @@ async function main() {
 
   try {
 
+    console.log(
+      "Connecting to MongoDB..."
+    );
+
+
     await connectDB();
 
+
+    console.log(
+      "MongoDB connected."
+    );
+
+
     await seedDefaults();
+
 
     app.listen(
       PORT,
@@ -1872,77 +2966,61 @@ async function main() {
           `Web app running on port ${PORT}`
         );
 
+
         console.log(
-          `Public folder: ${publicPath}`
+          `Normal mining: ${NORMAL_MINING_DAILY_RATE} USDT/day`
         );
 
 
-        /* ---------------- MINING HEARTBEAT ---------------- */
-
-        setInterval(
-          async () => {
-
-            try {
-
-              const users =
-                await User.find({
-
-                  miningActive:
-                    true,
-
-                  miningPrincipal: {
-                    $gt: 0
-                  }
-
-                }).limit(1000);
-
-              for (
-                const user of users
-              ) {
-
-                await settleMining(
-                  user
-                );
-              }
-
-            } catch (err) {
-
-              console.error(
-                "Mining heartbeat failed:",
-                err.message
-              );
-            }
-
-          },
-          60000
+        console.log(
+          `Boost mining base rate: ${MINING_DAILY_RATE} /day`
         );
 
 
-        /* ---------------- START BOT ---------------- */
+        console.log(
+          "Mining system: NORMAL + TOP-UP BOOST"
+        );
+
+
+        /*
+          Start background mining settlement.
+        */
+
+        startMiningHeartbeat();
+
+
+        /*
+          Start Telegram bot.
+        */
 
         Promise
           .resolve()
-          .then(() =>
-            startBot()
+          .then(
+            () => startBot()
           )
-          .then(bot => {
+          .then(
+            bot => {
 
-            global.botInstance =
-              bot;
+              global.botInstance =
+                bot;
 
-            console.log(
-              "Telegram bot started successfully."
-            );
+              console.log(
+                "Telegram bot started."
+              );
 
-          })
-          .catch(err => {
+            }
+          )
+          .catch(
+            err => {
 
-            console.error(
-              "Telegram bot failed to start:",
-              err
-            );
+              console.error(
+                "Telegram bot failed to start:",
+                err
 
-          });
+              );
+
+            }
+          );
 
       }
     );
@@ -1954,8 +3032,11 @@ async function main() {
       err
     );
 
+
     process.exit(1);
+
   }
+
 }
 
 
