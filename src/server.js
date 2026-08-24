@@ -12,6 +12,7 @@ const { verifyTelegramInitData } = require("./auth");
 const { startBot } = require("./bot");
 
 const app = express();
+
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: false }));
@@ -20,18 +21,32 @@ app.use(express.static(path.join(process.cwd(), "public")));
 const PORT = process.env.PORT || 3000;
 
 function auth(req, res, next) {
-  const initData = req.headers["x-telegram-init-data"] || req.body?.initData;
-  const tgUser = verifyTelegramInitData(initData, process.env.BOT_TOKEN);
+  const initData =
+    req.headers["x-telegram-init-data"] ||
+    req.body?.initData;
+
+  const tgUser = verifyTelegramInitData(
+    initData,
+    process.env.BOT_TOKEN
+  );
 
   // Demo/browser fallback is intentionally disabled in production.
-  if (!tgUser) return res.status(401).json({ error: "Telegram authorization required" });
+  if (!tgUser) {
+    return res
+      .status(401)
+      .json({
+        error: "Telegram authorization required"
+      });
+  }
 
   req.tgUser = tgUser;
   next();
 }
 
 async function getOrCreateUser(tg) {
-  let user = await User.findOne({ telegramId: String(tg.id) });
+  let user = await User.findOne({
+    telegramId: String(tg.id)
+  });
 
   if (!user) {
     user = await User.create({
@@ -47,6 +62,7 @@ async function getOrCreateUser(tg) {
     user.lastName = tg.last_name;
     user.photoUrl = tg.photo_url;
     user.lastSeenAt = new Date();
+
     await user.save();
   }
 
@@ -57,15 +73,27 @@ function serializeUser(u) {
   return {
     telegramId: u.telegramId,
     username: u.username || "",
-    name: [u.firstName, u.lastName].filter(Boolean).join(" ") || "User",
-    photoUrl: u.photoUrl || "/assets/assistant-logo.jpg",
+    name:
+      [u.firstName, u.lastName]
+        .filter(Boolean)
+        .join(" ") || "User",
+    photoUrl:
+      u.photoUrl || "/assets/assistant-logo.jpg",
     level: u.level || 1,
     coins: Number(u.coins.toFixed(4)),
     usdt: Number(u.usdt.toFixed(8)),
-    totalBalance: Number((u.coins + u.usdt).toFixed(8)),
-    referralIncome: Number((u.referralIncome || 0).toFixed(8)),
-    referralCoins: Number((u.referralCoins || 0).toFixed(4)),
-    withdrawnUsdt: Number((u.withdrawnUsdt || 0).toFixed(8)),
+    totalBalance: Number(
+      (u.coins + u.usdt).toFixed(8)
+    ),
+    referralIncome: Number(
+      (u.referralIncome || 0).toFixed(8)
+    ),
+    referralCoins: Number(
+      (u.referralCoins || 0).toFixed(4)
+    ),
+    withdrawnUsdt: Number(
+      (u.withdrawnUsdt || 0).toFixed(8)
+    ),
     incomeHour: 0.0005,
     incomeDay: 0.01,
     incomeMonth: 0.34,
@@ -77,7 +105,10 @@ function serializeUser(u) {
 }
 
 app.get("/health", (_req, res) =>
-  res.json({ ok: true, service: "novum-ai-agent" })
+  res.json({
+    ok: true,
+    service: "novum-ai-agent"
+  })
 );
 
 app.get("/api/me", auth, async (req, res) => {
@@ -86,7 +117,10 @@ app.get("/api/me", auth, async (req, res) => {
     res.json(serializeUser(user));
   } catch (e) {
     console.error(e);
-    res.status(500).json({ error: "Failed to load account" });
+
+    res.status(500).json({
+      error: "Failed to load account"
+    });
   }
 });
 
@@ -96,7 +130,9 @@ app.get("/api/referrals", auth, async (req, res) => {
   const direct = await User.find({
     referrerTelegramId: user.telegramId
   })
-    .select("telegramId username firstName lastName createdAt")
+    .select(
+      "telegramId username firstName lastName createdAt"
+    )
     .sort({ createdAt: -1 })
     .limit(100);
 
@@ -105,7 +141,9 @@ app.get("/api/referrals", auth, async (req, res) => {
     direct: direct.map(x => ({
       telegramId: x.telegramId,
       name:
-        [x.firstName, x.lastName].filter(Boolean).join(" ") ||
+        [x.firstName, x.lastName]
+          .filter(Boolean)
+          .join(" ") ||
         x.username ||
         "User",
       username: x.username || "",
@@ -116,17 +154,23 @@ app.get("/api/referrals", auth, async (req, res) => {
 
 app.post("/api/presence", auth, async (req, res) => {
   await Presence.findOneAndUpdate(
-    { telegramId: String(req.tgUser.id) },
+    {
+      telegramId: String(req.tgUser.id)
+    },
     {
       telegramId: String(req.tgUser.id),
       lastSeenAt: new Date()
     },
-    { upsert: true }
+    {
+      upsert: true
+    }
   );
 
   const online = await Presence.countDocuments({
     lastSeenAt: {
-      $gte: new Date(Date.now() - 45000)
+      $gte: new Date(
+        Date.now() - 45000
+      )
     }
   });
 
@@ -135,6 +179,7 @@ app.post("/api/presence", auth, async (req, res) => {
 
 app.get("/api/account", auth, async (req, res) => {
   const user = await getOrCreateUser(req.tgUser);
+
   let invitedBy = null;
 
   if (user.referrerTelegramId) {
@@ -145,7 +190,9 @@ app.get("/api/account", auth, async (req, res) => {
     if (r) {
       invitedBy = {
         name:
-          [r.firstName, r.lastName].filter(Boolean).join(" ") || "User",
+          [r.firstName, r.lastName]
+            .filter(Boolean)
+            .join(" ") || "User",
         username: r.username || ""
       };
     }
@@ -166,36 +213,51 @@ app.get("/api/account", auth, async (req, res) => {
 
 app.get("/api/faq", auth, async (req, res) =>
   res.json(
-    await FAQ.find({ active: true })
+    await FAQ.find({
+      active: true
+    })
       .sort({ order: 1 })
       .limit(18)
   )
 );
 
-app.get("/api/transactions", auth, async (req, res) => {
-  const user = await getOrCreateUser(req.tgUser);
+app.get(
+  "/api/transactions",
+  auth,
+  async (req, res) => {
+    const user = await getOrCreateUser(
+      req.tgUser
+    );
 
-  const tx = await Transaction.find({
-    telegramId: user.telegramId
-  })
-    .sort({ createdAt: -1 })
-    .limit(50);
+    const tx = await Transaction.find({
+      telegramId: user.telegramId
+    })
+      .sort({ createdAt: -1 })
+      .limit(50);
 
-  res.json(tx);
-});
+    res.json(tx);
+  }
+);
 
 app.post("/api/claim", auth, async (req, res) => {
   const user = await getOrCreateUser(req.tgUser);
 
   const now = Date.now();
+
   const last = user.lastClaimAt
     ? user.lastClaimAt.getTime()
     : 0;
 
-  if (last && now - last < 60 * 60 * 1000) {
+  if (
+    last &&
+    now - last < 60 * 60 * 1000
+  ) {
     return res
       .status(429)
-      .json({ error: "Profit can be claimed once per hour." });
+      .json({
+        error:
+          "Profit can be claimed once per hour."
+      });
   }
 
   const amount = 0.0005;
@@ -220,8 +282,13 @@ app.post("/api/claim", auth, async (req, res) => {
 });
 
 app.post("/api/topup", auth, async (req, res) => {
-  const user = await getOrCreateUser(req.tgUser);
-  const amount = Number(req.body.amount);
+  const user = await getOrCreateUser(
+    req.tgUser
+  );
+
+  const amount = Number(
+    req.body.amount
+  );
 
   if (
     !Number.isFinite(amount) ||
@@ -230,7 +297,10 @@ app.post("/api/topup", auth, async (req, res) => {
   ) {
     return res
       .status(400)
-      .json({ error: "Enter a valid top-up amount." });
+      .json({
+        error:
+          "Enter a valid top-up amount."
+      });
   }
 
   await Transaction.create({
@@ -241,7 +311,10 @@ app.post("/api/topup", auth, async (req, res) => {
     note: "Top-up request"
   });
 
-  if (process.env.ADMIN_CHAT_ID && global.botInstance) {
+  if (
+    process.env.ADMIN_CHAT_ID &&
+    global.botInstance
+  ) {
     try {
       await global.botInstance.telegram.sendMessage(
         process.env.ADMIN_CHAT_ID,
@@ -262,129 +335,220 @@ app.post("/api/topup", auth, async (req, res) => {
   });
 });
 
-app.post("/api/withdraw", auth, async (req, res) => {
-  const user = await getOrCreateUser(req.tgUser);
+app.post(
+  "/api/withdraw",
+  auth,
+  async (req, res) => {
+    const user = await getOrCreateUser(
+      req.tgUser
+    );
 
-  const amount = Number(req.body.amount);
-  const wallet = String(req.body.wallet || "").trim();
-  const min = Number(
-    process.env.MIN_WITHDRAW_USDT || 1
-  );
+    const amount = Number(
+      req.body.amount
+    );
 
-  if (!Number.isFinite(amount) || amount < min) {
-    return res
-      .status(400)
-      .json({
-        error: `Minimum withdrawal is ${min} USDT.`
-      });
-  }
+    const wallet = String(
+      req.body.wallet || ""
+    ).trim();
 
-  if (!wallet || wallet.length < 8) {
-    return res
-      .status(400)
-      .json({
-        error: "Enter a valid wallet address."
-      });
-  }
+    const min = Number(
+      process.env.MIN_WITHDRAW_USDT || 1
+    );
 
-  if (amount > user.usdt) {
-    return res
-      .status(400)
-      .json({
-        error: "Insufficient USDT balance."
-      });
-  }
-
-  user.usdt -= amount;
-  await user.save();
-
-  await Transaction.create({
-    telegramId: user.telegramId,
-    type: "withdraw",
-    amount,
-    status: "pending",
-    note: "Withdrawal request",
-    meta: { wallet }
-  });
-
-  if (process.env.ADMIN_CHAT_ID && global.botInstance) {
-    try {
-      await global.botInstance.telegram.sendMessage(
-        process.env.ADMIN_CHAT_ID,
-        `💸 Withdrawal request\nUser: ${user.telegramId}\nAmount: ${amount} USDT\nWallet: ${wallet}`
-      );
-    } catch (e) {
-      console.error(
-        "Admin notification failed",
-        e.message
-      );
+    if (
+      !Number.isFinite(amount) ||
+      amount < min
+    ) {
+      return res
+        .status(400)
+        .json({
+          error:
+            `Minimum withdrawal is ${min} USDT.`
+        });
     }
-  }
 
-  res.json({
-    ok: true,
-    user: serializeUser(user)
-  });
-});
+    if (
+      !wallet ||
+      wallet.length < 8
+    ) {
+      return res
+        .status(400)
+        .json({
+          error:
+            "Enter a valid wallet address."
+        });
+    }
 
-app.post("/api/subscribe", auth, async (req, res) => {
-  const user = await getOrCreateUser(req.tgUser);
+    if (amount > user.usdt) {
+      return res
+        .status(400)
+        .json({
+          error:
+            "Insufficient USDT balance."
+        });
+    }
 
-  const exists = await Transaction.findOne({
-    telegramId: user.telegramId,
-    type: "subscribe",
-    status: "completed"
-  });
+    user.usdt -= amount;
 
-  if (exists) {
-    return res.json({
+    await user.save();
+
+    await Transaction.create({
+      telegramId: user.telegramId,
+      type: "withdraw",
+      amount,
+      status: "pending",
+      note: "Withdrawal request",
+      meta: {
+        wallet
+      }
+    });
+
+    if (
+      process.env.ADMIN_CHAT_ID &&
+      global.botInstance
+    ) {
+      try {
+        await global.botInstance.telegram.sendMessage(
+          process.env.ADMIN_CHAT_ID,
+          `💸 Withdrawal request\nUser: ${user.telegramId}\nAmount: ${amount} USDT\nWallet: ${wallet}`
+        );
+      } catch (e) {
+        console.error(
+          "Admin notification failed",
+          e.message
+        );
+      }
+    }
+
+    res.json({
       ok: true,
-      message: "Reward already claimed."
+      user: serializeUser(user)
     });
   }
+);
 
-  user.coins += 10;
-  await user.save();
+app.post(
+  "/api/subscribe",
+  auth,
+  async (req, res) => {
+    const user = await getOrCreateUser(
+      req.tgUser
+    );
 
-  await Transaction.create({
-    telegramId: user.telegramId,
-    type: "subscribe",
-    coins: 10,
-    note: "Channel subscription reward"
-  });
+    const exists =
+      await Transaction.findOne({
+        telegramId: user.telegramId,
+        type: "subscribe",
+        status: "completed"
+      });
 
-  res.json({
-    ok: true,
-    user: serializeUser(user)
-  });
-});
+    if (exists) {
+      return res.json({
+        ok: true,
+        message:
+          "Reward already claimed."
+      });
+    }
+
+    user.coins += 10;
+
+    await user.save();
+
+    await Transaction.create({
+      telegramId: user.telegramId,
+      type: "subscribe",
+      coins: 10,
+      note:
+        "Channel subscription reward"
+    });
+
+    res.json({
+      ok: true,
+      user: serializeUser(user)
+    });
+  }
+);
 
 /*
- * Express 5 compatibility fix:
+ * Express 5 compatible SPA fallback.
  *
- * Old:
- * app.get("*", ...)
+ * The old app.get("*", ...) syntax is not
+ * supported by Express 5/path-to-regexp.
  *
- * Express 5 / path-to-regexp no longer accepts a bare "*".
- * "{*splat}" matches both "/" and other unmatched paths.
+ * "{*splat}" matches the root path and
+ * other unmatched routes.
  */
-app.get("/{*splat}", (_req, res) => {
-  res.sendFile(
-    path.join(process.cwd(), "public", "index.html")
-  );
-});
+app.get(
+  "/{*splat}",
+  (_req, res) => {
+    res.sendFile(
+      path.join(
+        process.cwd(),
+        "public",
+        "index.html"
+      )
+    );
+  }
+);
 
+/*
+ * IMPORTANT FOR RENDER:
+ *
+ * Start the HTTP server BEFORE starting
+ * the Telegram bot.
+ *
+ * Render needs an open port quickly.
+ * Previously startBot() was awaited before
+ * app.listen(), so a slow/hanging bot startup
+ * prevented Render from detecting the port.
+ */
 async function main() {
-  await connectDB();
+  try {
+    await connectDB();
 
-  global.botInstance = await startBot();
+    app.listen(
+      PORT,
+      "0.0.0.0",
+      () => {
+        console.log(
+          `Web app running on port ${PORT}`
+        );
 
-  app.listen(PORT, () =>
-    console.log(`Web app running on port ${PORT}`)
-  );
+        /*
+         * Start Telegram bot AFTER the web
+         * server is already listening.
+         *
+         * Do not await this here.
+         */
+        Promise.resolve()
+          .then(() => startBot())
+          .then(bot => {
+            global.botInstance = bot;
+            console.log(
+              "Telegram bot started successfully"
+            );
+          })
+          .catch(err => {
+            console.error(
+              "Telegram bot failed to start:",
+              err
+            );
+
+            /*
+             * Keep the web server alive even if
+             * the Telegram bot has a startup issue.
+             */
+          });
+      }
+    );
+  } catch (err) {
+    console.error(
+      "Server startup failed:",
+      err
+    );
+
+    process.exit(1);
+  }
 }
 
-main().catch(err => {
-  console.error(err);
-  process.exit(1);
-});
+main();
