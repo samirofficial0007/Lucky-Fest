@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+  <meta name="theme-color" content="#101a39">
+  <title>Lucky Fest</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="https://unpkg.com/@tonconnect/ui@latest/dist/tonconnect-ui.min.js"></script>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <button id="closeBtn" class="top-control close-control"><span class="x">×</span> Close</button>
+      <div class="brand"><span class="brand-logo">LF</span><span class="brand-name">LUCKY FEST</span></div>
+      <div class="online"><i></i><span>0 online</span></div>
+    </header>
+    <main id="content"></main>
+    <div id="payoutToast" class="payout-toast"><div class="payout-icon">⇩</div><div><b id="payoutName">Lucky user</b><strong>activity</strong><span id="payoutAmount">Live</span></div></div>
+    <nav class="bottom-nav" aria-label="Main navigation">
+      <button data-page="trade"><span class="nav-icon">⌂</span><small>Home</small></button>
+      <button data-page="tasks"><span class="nav-icon">✓</span><small>Tasks</small></button>
+      <button data-page="farm"><span class="nav-icon">⛏</span><small>Mining</small></button>
+      <button data-page="friends"><span class="nav-icon">♧</span><small>Friends</small></button>
+      <button data-page="account"><span class="nav-icon">♙</span><small>Account</small></button>
+    </nav>
+  </div>
+  <div id="toast"></div>
+  <script src="/app.js"></script>
+</body>
+</html>
