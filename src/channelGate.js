@@ -14,7 +14,9 @@ const schema = new mongoose.Schema(
         username: String,
         title: String,
         url: String,
-        type: String
+        // NOTE: must be { type: String } — a bare `type: String` makes Mongoose
+        // read the whole subdocument as a plain String and every save() throws.
+        type: { type: String }
       }
     ]
   },
@@ -142,7 +144,10 @@ function renderList(s) {
 function registerGateCommands(bot, isAdmin) {
   // /channeljoinpopupshow @username  (or t.me link)
   bot.command("channeljoinpopupshow", async (ctx) => {
-    if (!(await isAdmin(ctx.from.id))) return;
+   try {
+    if (!(await isAdmin(ctx.from.id))) {
+      return ctx.reply("❌ You are not an admin of this bot.");
+    }
     const arg = ctx.message.text.split(/\s+/)[1];
     if (!arg) {
       return ctx.reply(
@@ -197,6 +202,10 @@ function registerGateCommands(bot, isAdmin) {
     s.enabled = true;
     await s.save();
     await ctx.reply("✅ Added @" + (chat.username || parsed.username) + "\n\n" + renderList(s));
+   } catch (e) {
+    console.error("[gate] channeljoinpopupshow error:", e);
+    await ctx.reply("❌ Error: " + (e && e.message ? e.message : "unknown")).catch(() => {});
+   }
   });
 
   // /removechannel <number>
