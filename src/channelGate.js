@@ -32,7 +32,7 @@ async function getSettings() {
 
 /* ---------- Membership check ---------- */
 const okCache = new Map(); // "userId:chatId" -> expiry ts (only positive results)
-const CACHE_MS = 2 * 60 * 1000;
+const CACHE_MS = 20 * 1000; // short, so a user who left is detected quickly
 
 function isMemberStatus(m) {
   if (!m) return false;
