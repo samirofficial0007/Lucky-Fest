@@ -65,9 +65,6 @@ function depositAddress() {
 function depositAddressTonkeeper() {
   return (state.config && state.config.depositAddressTonkeeper) || "UQCzzBp_io5zdMiOCMykYY7HzUFkhRqST-xMWvr_DzSScooi";
 }
-function depositAddressDefi() {
-  return (state.config && state.config.depositAddressDefi) || "UQAVEPBT35E0amE3PpQObBDC9ZGAflMcNlUpwCRVph2eHXkg";
-}
 
 function channelUrl() {
   return (state.config && state.config.channelUrl) || "https://t.me/Lucky_Fest_Official";
@@ -649,29 +646,12 @@ async function openGift() {
   openGiftSpin();
 }
 
+function escHtml(t){return String(t==null?"":t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
+
 function renderTasks(){
   content.innerHTML=`<h2 style="margin:0 0 6px;font-size:22px;font-weight:900">Tasks</h2>
-    <p class="hint">Channels, bots, partners & official — earn coins</p><div id="taskList"><p class="hint">Loading...</p></div>`+
-    (state.isAdmin?`<div class="card" style="margin-top:16px"><h3>Admin · Add task</h3><div class="admin-form">
-      <label>Title</label><input id="tTitle" placeholder="Join official channel">
-      <label>Description</label><input id="tDesc">
-      <label>Type</label><select id="tType">
-        <option value="official_channel">Official Channel</option><option value="official_bot">Official Bot</option>
-        <option value="channel">Channel</option><option value="bot">Bot</option>
-        <option value="partner_channel">Partner Channel</option><option value="partner_bot">Partner Bot</option>
-        <option value="unique">Unique</option></select>
-      <label>Link</label><input id="tLink" placeholder="https://t.me/...">
-      <label>Reward coins</label><input id="tCoins" type="number" value="10">
-      <label>Button text</label><input id="tBtn" value="Open">
-      <button class="btn btn-lime" id="addTask">+ Add task</button></div></div>`:"");
+    <p class="hint">Complete tasks and earn coins</p><div id="taskList"><p class="hint">Loading...</p></div>`;
   loadTasks();
-  const add=$("#addTask");
-  if(add) add.onclick=async()=>{try{
-    await api("/api/admin/tasks",{method:"POST",body:JSON.stringify({
-      title:$("#tTitle").value,description:$("#tDesc").value,taskType:$("#tType").value,
-      link:$("#tLink").value,rewardCoins:Number($("#tCoins").value)||10,buttonText:$("#tBtn").value||"Open",icon:"telegram"
-    })}); toast("Task added"); loadTasks();
-  }catch(e){toast(e.message);}};
 }
 
 async function loadTasks(){
@@ -681,16 +661,16 @@ async function loadTasks(){
     if(!state.tasks.length){box.innerHTML='<p class="hint">No tasks yet</p>';return;}
     const typeLabel={bot:"Bot",channel:"Channel",partner_channel:"Partner Channel",partner_bot:"Partner Bot",official_channel:"Official Channel",official_bot:"Official Bot",unique:"Unique"};
     box.innerHTML=state.tasks.map(t=>`<div class="task-card pop"><div class="task-icon"><img src="${TG_LOGO}" alt="TG"></div>
-      <div class="body"><div class="task-type">${typeLabel[t.taskType]||t.taskType||"Task"}</div><b>${t.title}</b>
-      <small>${t.description||""} · +${t.rewardCoins||0} coins</small></div>
-      ${t.claimed?'<button class="btn btn-dark btn-sm" disabled>Done</button>':
-        '<button class="btn btn-blue btn-sm task-go" data-id="'+t.id+'" data-link="'+(t.link||'')+'">'+(t.buttonText||"Open")+'</button>'}</div>`).join("");
+      <div class="body"><div class="task-type">${escHtml(typeLabel[t.taskType]||t.taskType||"Task")}</div><b>${escHtml(t.title)}</b>
+      <small>${t.description?escHtml(t.description)+" · ":""}🎁 +${Number(t.rewardCoins)||0} coins</small></div>
+      ${t.claimed?'<button class="btn btn-dark btn-sm" disabled>Done ✓</button>':
+        '<button class="btn btn-blue btn-sm task-go" data-id="'+escHtml(t.id)+'" data-link="'+escHtml(t.link||"")+'">'+escHtml(t.buttonText||"Open")+'</button>'}</div>`).join("");
     $$(".task-go").forEach(btn=>{btn.onclick=async()=>{
-      if(btn.dataset.link){if(tg&&tg.openTelegramLink)tg.openTelegramLink(btn.dataset.link);else window.open(btn.dataset.link,"_blank");}
+      if(btn.dataset.link){if(tg&&tg.openTelegramLink&&/^https:\/\/t\.me\//i.test(btn.dataset.link))tg.openTelegramLink(btn.dataset.link);else window.open(btn.dataset.link,"_blank");}
       try{const res=await api("/api/tasks/claim",{method:"POST",body:JSON.stringify({taskId:btn.dataset.id})});
         state.user=res.user;toast("Reward claimed");loadTasks();}catch(e){toast(e.message);}
     };});
-  }catch(e){box.innerHTML='<p class="hint">'+e.message+'</p>';}
+  }catch(e){box.innerHTML='<p class="hint">'+escHtml(e.message)+'</p>';}
 }
 
 function renderAccount(){
@@ -760,11 +740,11 @@ function openHowEarn(){
 }
 
 function openTopup(){
-  const addrTk=depositAddressTonkeeper(), addrDefi=depositAddressDefi();
+  const addrTk=depositAddressTonkeeper();
   const statusText=state.walletConnected?"Connected: "+shortAddr(state.walletAddress):"Not connected — connect first";
   const connectLabel=state.walletConnected?"Disconnect":"Connect Wallet";
-  openModal('<div class="modal-head"><h2>Top up balance</h2><button class="modal-close" id="mc">Close</button></div><p class="hint">Connect wallet, then Deposit. Min 3 USDT.</p><div class="wallet-box"><b>Tonkeeper</b>'+addrTk+'</div><button class="btn btn-dark btn-block btn-sm" id="copyTk">Copy Tonkeeper</button><div class="wallet-box" style="margin-top:10px"><b>Telegram DeFi</b>'+addrDefi+'</div><button class="btn btn-dark btn-block btn-sm" id="copyDefi">Copy DeFi</button><button class="btn btn-blue btn-block" id="connectWallet" style="margin-top:14px">'+connectLabel+'</button><p class="hint" id="walletStatus" style="text-align:center">'+statusText+'</p><button class="btn btn-lime btn-block" id="sendDeposit">Deposit</button>');
-  $("#mc").onclick=closeModal; $("#copyTk").onclick=()=>copyText(addrTk); $("#copyDefi").onclick=()=>copyText(addrDefi);
+  openModal('<div class="modal-head"><h2>Top up balance</h2><button class="modal-close" id="mc">Close</button></div><p class="hint">Connect wallet, then Deposit. Min 3 USDT.</p><div class="wallet-box"><b>Tonkeeper</b>'+addrTk+'</div><button class="btn btn-dark btn-block btn-sm" id="copyTk">Copy Tonkeeper</button><button class="btn btn-blue btn-block" id="connectWallet" style="margin-top:14px">'+connectLabel+'</button><p class="hint" id="walletStatus" style="text-align:center">'+statusText+'</p><button class="btn btn-lime btn-block" id="sendDeposit">Deposit</button>');
+  $("#mc").onclick=closeModal; $("#copyTk").onclick=()=>copyText(addrTk);
   $("#connectWallet").onclick=()=>connectWallet();
   $("#sendDeposit").onclick=async()=>{if(!state.walletConnected)return toast("Please connect wallet first");await sendDepositFromWallet();};
 }
@@ -883,7 +863,6 @@ async function boot() {
       channelUrl: "https://t.me/Lucky_Fest_Official",
       depositAddress: "UQCzzBp_io5zdMiOCMykYY7HzUFkhRqST-xMWvr_DzSScooi",
       depositAddressTonkeeper: "UQCzzBp_io5zdMiOCMykYY7HzUFkhRqST-xMWvr_DzSScooi",
-      depositAddressDefi: "UQAVEPBT35E0amE3PpQObBDC9ZGAflMcNlUpwCRVph2eHXkg",
       botName: "Lucky Fest"
     };
   }
