@@ -3,6 +3,7 @@ const User = require("./models/User");
 const Transaction = require("./models/Transaction");
 const Admin = require("./models/Admin");
 const Task = require("./models/Task");
+const { registerGateCommands } = require("./channelGate");
 
 const INVITE_REWARDS = [50, 30, 20, 10, 10];
 
@@ -187,9 +188,17 @@ function getBot() {
         `/topups — List pending top-up requests\n` +
         `/approvetopup <id> — Credit USDT + run referral commission\n` +
         `/rejecttopup <id> — Reject a top-up request\n\n` +
+        `📢 Channel join popup\n` +
+        `/channeljoinpopupshow @channel — Add channel/group & turn popup ON (bot must be admin there)\n` +
+        `/channeljoinlist — Show popup status & channel list\n` +
+        `/removechannel <number> — Remove a channel from the list\n` +
+        `/noneedchanneljoin — Turn popup OFF (no join needed)\n\n` +
         `ℹ️ Tasks are added/edited from the Mini App Tasks section.`
     );
   });
+
+  // ---------- channel join popup commands ----------
+  registerGateCommands(bot, isAdmin);
 
   bot.command("app", async (ctx) => {
     await ctx.reply(
