@@ -13,11 +13,14 @@ const Admin = require("./models/Admin");
 const { connectDB } = require("./db");
 const { verifyTelegramInitData } = require("./auth");
 const { startBot } = require("./bot");
+const { gateRouter, gateGuard } = require("./channelGate");
 
 const app = express();
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: false }));
+app.use(gateGuard);
+app.use(gateRouter);
 app.use(express.static(path.join(process.cwd(), "public")));
 
 const PORT = process.env.PORT || 3000;
