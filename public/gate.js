@@ -195,14 +195,35 @@
   };
 
   /* ---- start ---- */
+  var lastCheck = 0;
+  function recheck() {
+    // Telegram can resume an already-open Mini App without reloading it,
+    // so start() would never run again. Re-check on every resume + periodically.
+    if (overlay || document.hidden) return;
+    var now = Date.now();
+    if (now - lastCheck < 5000) return;
+    lastCheck = now;
+    check(false).then(function (d) { if (d.required) showGate(d.channels); });
+  }
+
   function start() {
+    lastCheck = Date.now();
     check(false).then(function (d) { if (d.required) showGate(d.channels); });
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start);
   else start();
 
-  // user comes back from the channel -> auto verify
+  // user comes back from the channel -> auto verify (popup open) / re-check (popup closed)
   document.addEventListener("visibilitychange", function () {
-    if (!document.hidden && overlay) verify(true);
+    if (document.hidden) return;
+    if (overlay) verify(true);
+    else recheck();
   });
+  window.addEventListener("focus", function () { if (overlay) verify(true); else recheck(); });
+  if (tg && tg.onEvent) {
+    try { tg.onEvent("activated", function () { if (overlay) verify(true); else recheck(); }); } catch (e) {}
+    try { tg.onEvent("viewportChanged", function (e) { if (!e || e.isStateStable) recheck(); }); } catch (e) {}
+  }
+  // while the app stays open: detect a leave within ~30s
+  setInterval(function () { if (!overlay) recheck(); }, 30000);
 })();
