@@ -193,7 +193,11 @@ function getBot() {
         `/channeljoinlist — Show popup status & channel list\n` +
         `/removechannel <number> — Remove a channel from the list\n` +
         `/noneedchanneljoin — Turn popup OFF (no join needed)\n\n` +
-        `ℹ️ Tasks are added/edited from the Mini App Tasks section.`
+        `📋 Tasks (shown in Mini App → Tasks)\n` +
+        `/addtask — Add a task step by step (name → link → reward)\n` +
+        `/addtask Name | https://t.me/link | 10 — Add a task in one line\n` +
+        `/tasklist — Show all active tasks\n` +
+        `/removetask <number> — Remove a task from the list`
     );
   });
 
@@ -449,6 +453,123 @@ function getBot() {
     );
   });
 
+
+  // ---------- tasks (admin) ----------
+  const esc = (t) =>
+    String(t == null ? "" : t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+  function detectTask(link) {
+    const m = String(link).match(/t\.me\/(?:\+)?([A-Za-z0-9_]+)/i);
+    const handle = m ? m[1] : "";
+    const isBot = /bot$/i.test(handle);
+    return isBot
+      ? { taskType: "bot", buttonText: "Start Bot" }
+      : { taskType: "channel", buttonText: "Join" };
+  }
+
+  async function renderTaskList() {
+    const tasks = await Task.find({ active: true }).sort({ sortOrder: 1, createdAt: 1 });
+    if (!tasks.length) return "📋 <b>Tasks</b>\n\nNo active tasks yet.\nAdd one with /addtask";
+    const lines = tasks.map(
+      (t, i) =>
+        `<b>${i + 1}. ${esc(t.title)}</b>\n` +
+        `   🔗 ${t.link ? `<a href="${esc(t.link)}">${esc(t.link)}</a>` : "—"}\n` +
+        `   🎁 +${t.rewardCoins || 0} coins · ${esc(t.taskType)}`
+    );
+    return `📋 <b>Active tasks (${tasks.length})</b>\n\n` + lines.join("\n\n");
+  }
+
+  async function createTask(ctx, title, link, coins) {
+    const info = detectTask(link);
+    await Task.create({
+      title,
+      description: "",
+      rewardCoins: coins,
+      link,
+      buttonText: info.buttonText,
+      taskType: info.taskType,
+      icon: "telegram",
+      sortOrder: (await Task.countDocuments({ active: true })) + 1,
+      createdBy: String(ctx.from.id)
+    });
+    return ctx.reply(
+      `✅ <b>Task added</b>\n\n` +
+        `📝 ${esc(title)}\n` +
+        `🔗 ${esc(link)}\n` +
+        `🎁 +${coins} coins · ${info.taskType}\n\n` +
+        (await renderTaskList()),
+      { parse_mode: "HTML", disable_web_page_preview: true }
+    );
+  }
+
+  bot.command("addtask", async (ctx) => {
+    try {
+      if (!(await isAdmin(ctx.from.id))) return ctx.reply("❌ You are not an admin of this bot.");
+      const raw = ctx.message.text.replace(/^\/addtask(@\w+)?/i, "").trim();
+
+      // one-line mode:  /addtask Name | https://t.me/xxx | 10
+      if (raw) {
+        const parts = raw.split("|").map((x) => x.trim());
+        const [title, link, coinsRaw] = parts;
+        if (!title || !link || !/^https?:\/\//i.test(link)) {
+          return ctx.reply(
+            "❌ Wrong format.\n\nUse:\n/addtask Task name | https://t.me/channel | 10\n\nOr just send /addtask and I will ask step by step."
+          );
+        }
+        const coins = coinsRaw === undefined || coinsRaw === "" ? 10 : Number(coinsRaw);
+        if (!Number.isFinite(coins) || coins < 0) return ctx.reply("❌ Reward must be a number.");
+        return createTask(ctx, title, link, coins);
+      }
+
+      // guided mode
+      const session = getSession(ctx.from.id);
+      session.mode = "add_task";
+      session.step = 1;
+      session.data = {};
+      await ctx.reply(
+        "📋 Add task\n\nStep 1/3: Send the task name.\nExample: Join our official channel\n\nOr type /cancel to abort."
+      );
+    } catch (e) {
+      console.error("addtask error:", e);
+      await ctx.reply("❌ Error: " + e.message).catch(() => {});
+    }
+  });
+
+  bot.command("tasklist", async (ctx) => {
+    try {
+      if (!(await isAdmin(ctx.from.id))) return ctx.reply("❌ You are not an admin of this bot.");
+      await ctx.reply(await renderTaskList(), { parse_mode: "HTML", disable_web_page_preview: true });
+    } catch (e) {
+      console.error("tasklist error:", e);
+      await ctx.reply("❌ Error: " + e.message).catch(() => {});
+    }
+  });
+
+  bot.command("removetask", async (ctx) => {
+    try {
+      if (!(await isAdmin(ctx.from.id))) return ctx.reply("❌ You are not an admin of this bot.");
+      const tasks = await Task.find({ active: true }).sort({ sortOrder: 1, createdAt: 1 });
+      const n = parseInt((ctx.message.text.split(/\s+/)[1] || "").trim(), 10);
+      if (!tasks.length) return ctx.reply("No active tasks.");
+      if (!Number.isInteger(n) || n < 1 || n > tasks.length) {
+        return ctx.reply(
+          (await renderTaskList()) + "\n\nUsage: /removetask <number>\nExample: /removetask 2",
+          { parse_mode: "HTML", disable_web_page_preview: true }
+        );
+      }
+      const t = tasks[n - 1];
+      t.active = false;
+      await t.save();
+      await ctx.reply(`🗑 Removed: <b>${esc(t.title)}</b>\n\n` + (await renderTaskList()), {
+        parse_mode: "HTML",
+        disable_web_page_preview: true
+      });
+    } catch (e) {
+      console.error("removetask error:", e);
+      await ctx.reply("❌ Error: " + e.message).catch(() => {});
+    }
+  });
+
   bot.command("cancel", async (ctx) => {
     clearSession(ctx.from.id);
     await ctx.reply("Cancelled.");
@@ -458,6 +579,45 @@ function getBot() {
   bot.on("message", async (ctx, next) => {
     const session = getSession(ctx.from.id);
     if (!session.mode) return next();
+
+    // ---- ADD TASK FLOW ----
+    if (session.mode === "add_task") {
+      if (!(await isAdmin(ctx.from.id))) {
+        clearSession(ctx.from.id);
+        return;
+      }
+      const t = (ctx.message.text || "").trim();
+      if (!t || t.startsWith("/")) return ctx.reply("Please send text (not a command), or /cancel.");
+
+      if (session.step === 1) {
+        session.data.title = t;
+        session.step = 2;
+        return ctx.reply(
+          "✅ Name saved.\n\nStep 2/3: Send the link.\nExample: https://t.me/yourchannel"
+        );
+      }
+      if (session.step === 2) {
+        if (!/^https?:\/\//i.test(t)) {
+          return ctx.reply("❌ Link must start with https://  — send it again.");
+        }
+        session.data.link = t;
+        session.step = 3;
+        return ctx.reply("✅ Link saved.\n\nStep 3/3: Reward coins? (send a number, or: skip for 10)");
+      }
+      if (session.step === 3) {
+        const coins = t.toLowerCase() === "skip" ? 10 : Number(t);
+        if (!Number.isFinite(coins) || coins < 0) return ctx.reply("❌ Send a number, e.g. 10");
+        const { title, link } = session.data;
+        clearSession(ctx.from.id);
+        try {
+          return await createTask(ctx, title, link, coins);
+        } catch (e) {
+          console.error("addtask save error:", e);
+          return ctx.reply("❌ Could not save task: " + e.message);
+        }
+      }
+      return;
+    }
 
     // ---- TEXT ANNOUNCEMENT FLOW ----
     if (session.mode === "announce_text") {
