@@ -207,7 +207,6 @@ app.get("/api/config", (_req, res) => {
     channelUrl: process.env.CHANNEL_URL || "https://t.me/Lucky_Fest_Official",
     depositAddress: process.env.DEPOSIT_ADDRESS || "UQCzzBp_io5zdMiOCMykYY7HzUFkhRqST-xMWvr_DzSScooi",
     depositAddressTonkeeper: process.env.DEPOSIT_ADDRESS_TONKEEPER || "UQCzzBp_io5zdMiOCMykYY7HzUFkhRqST-xMWvr_DzSScooi",
-    depositAddressDefi: process.env.DEPOSIT_ADDRESS_DEFI || "UQAVEPBT35E0amE3PpQObBDC9ZGAflMcNlUpwCRVph2eHXkg",
     minWithdraw: Number(process.env.MIN_WITHDRAW_USDT || 3)
   });
 });
@@ -411,9 +410,8 @@ app.post("/api/topup", auth, async (req, res) => {
       `User: ${user.telegramId} (${user.firstName || user.name || ""})\n` +
       `Amount: $${amount} USDT\n` +
       `Tx: ${tx._id}\n` +
-      `Deposit wallets:\n` +
-      `Tonkeeper: UQCzzBp_io5zdMiOCMykYY7HzUFkhRqST-xMWvr_DzSScooi\n` +
-      `DeFi: UQAVEPBT35E0amE3PpQObBDC9ZGAflMcNlUpwCRVph2eHXkg`;
+      `Deposit wallet (Tonkeeper):\n` +
+      `${process.env.DEPOSIT_ADDRESS_TONKEEPER || "UQCzzBp_io5zdMiOCMykYY7HzUFkhRqST-xMWvr_DzSScooi"}`;
 
     if (process.env.ADMIN_CHAT_ID && global.botInstance) {
       try {
@@ -570,43 +568,7 @@ app.post("/api/tasks/claim", auth, async (req, res) => {
   }
 });
 
-// Admin: manage tasks from Mini App
-app.post("/api/admin/tasks", auth, async (req, res) => {
-  try {
-    const user = await getOrCreateUser(req.tgUser);
-    if (!(await isAdminUser(user.telegramId))) return res.status(403).json({ error: "Admin only" });
-
-    const { title, description, rewardCoins, rewardUsdt, link, buttonText, taskType, icon, sortOrder } = req.body;
-    if (!title) return res.status(400).json({ error: "Title required" });
-
-    const task = await Task.create({
-      title,
-      description: description || "",
-      rewardCoins: Number(rewardCoins) || 10,
-      rewardUsdt: Number(rewardUsdt) || 0,
-      link: link || "",
-      buttonText: buttonText || "Open",
-      taskType: taskType || "channel",
-      icon: icon || "telegram",
-      sortOrder: Number(sortOrder) || 0,
-      createdBy: user.telegramId
-    });
-    res.json({ ok: true, task });
-  } catch (e) {
-    res.status(500).json({ error: "Failed" });
-  }
-});
-
-app.delete("/api/admin/tasks/:id", auth, async (req, res) => {
-  try {
-    const user = await getOrCreateUser(req.tgUser);
-    if (!(await isAdminUser(user.telegramId))) return res.status(403).json({ error: "Admin only" });
-    await Task.findByIdAndUpdate(req.params.id, { active: false });
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ error: "Failed" });
-  }
-});
+// Tasks are added/removed from the bot: /addtask /tasklist /removetask
 
 app.get("/api/operations", auth, async (req, res) => {
   try {
